@@ -124,6 +124,7 @@ unary_expr = { primary_expr }
 primary_expr = {
     "(" ~ general_expression ~ ")" |
     check_sig_from_stack_verify |
+    stark_verify |
     check_sig_from_stack |
     check_sig |
     sha256_initialize |
@@ -166,6 +167,7 @@ div_op = { "/" }
 // PEG ordered choice: first matching alternative wins
 complex_expression = _{
     check_sig_from_stack_verify |
+    stark_verify |
     check_sig_from_stack |
     check_sig |
     check_multisig |
@@ -538,6 +540,11 @@ tweak_verify = {
 // CheckSigFromStack with verify: checkSigFromStackVerify(sig, pubkey, msg) → OP_CHECKSIGFROMSTACKVERIFY
 check_sig_from_stack_verify = {
     "checkSigFromStackVerify" ~ "(" ~ sig_arg ~ "," ~ sig_arg ~ "," ~ sig_arg ~ ")"
+}
+
+// Cairo STARK verification: verifyStarkProof(proof, publicInputs, verificationKey) → OP_STARK_VERIFY
+stark_verify = {
+    "verifyStarkProof" ~ "(" ~ sig_arg ~ "," ~ sig_arg ~ "," ~ sig_arg ~ ")"
 }
 
 // ─── Terminals ─────────────────────────────────────────────────────────────────

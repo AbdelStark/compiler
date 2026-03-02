@@ -476,6 +476,7 @@ fn parse_primary_expr(pair: Pair<Rule>) -> Result<Expression, String> {
         Rule::ec_mul_scalar_verify => parse_ec_mul_scalar_verify(pair),
         Rule::tweak_verify => parse_tweak_verify(pair),
         Rule::check_sig_from_stack_verify => parse_check_sig_from_stack_verify_expr(pair),
+        Rule::stark_verify => parse_stark_verify_expr(pair),
         Rule::asset_lookup => parse_asset_lookup_to_expression(pair),
         Rule::asset_count => parse_asset_count_to_expression(pair),
         Rule::asset_at => parse_asset_at_to_expression(pair),
@@ -586,6 +587,7 @@ fn parse_complex_expression(pair: Pair<Rule>) -> Result<Requirement, String> {
             })
         }
         Rule::check_sig_from_stack_verify => parse_check_sig_from_stack_verify(pair),
+        Rule::stark_verify => parse_stark_verify(pair),
         Rule::constructor => {
             let constructor = pair.as_str().to_string();
             Ok(Requirement::Comparison {
@@ -1702,6 +1704,42 @@ fn parse_check_sig_from_stack_verify_expr(pair: Pair<Rule>) -> Result<Expression
         signature,
         pubkey,
         message,
+    })
+}
+
+/// Parse verifyStarkProof(proof, publicInputs, verificationKey) as requirement context
+fn parse_stark_verify(pair: Pair<Rule>) -> Result<Requirement, String> {
+    let expr = parse_stark_verify_expr(pair)?;
+    Ok(Requirement::Comparison {
+        left: expr,
+        op: "==".to_string(),
+        right: Expression::Literal("true".to_string()),
+    })
+}
+
+/// Parse verifyStarkProof(proof, publicInputs, verificationKey) as expression context
+fn parse_stark_verify_expr(pair: Pair<Rule>) -> Result<Expression, String> {
+    let mut inner = pair.into_inner();
+    let proof = inner
+        .next()
+        .ok_or("Missing proof argument in verifyStarkProof")?
+        .as_str()
+        .to_string();
+    let public_inputs = inner
+        .next()
+        .ok_or("Missing publicInputs argument in verifyStarkProof")?
+        .as_str()
+        .to_string();
+    let verification_key = inner
+        .next()
+        .ok_or("Missing verificationKey argument in verifyStarkProof")?
+        .as_str()
+        .to_string();
+
+    Ok(Expression::StarkVerify {
+        proof,
+        public_inputs,
+        verification_key,
     })
 }
 

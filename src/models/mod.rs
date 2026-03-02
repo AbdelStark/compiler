@@ -319,4 +319,10 @@ pub enum Expression {
         pubkey: String,
         message: String,
     },
+    /// Verify a Cairo STARK proof: verifyStarkProof(proof, publicInputs, verificationKey)
+    StarkVerify {
+        proof: String,
+        public_inputs: String,
+        verification_key: String,
+    },
 }

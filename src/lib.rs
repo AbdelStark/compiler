@@ -2,6 +2,8 @@ pub mod compiler;
 pub mod models;
 pub mod opcodes;
 pub mod parser;
+#[cfg(not(any(target_arch = "wasm32", target_arch = "wasm64")))]
+pub mod stark_verify;
 
 #[cfg(feature = "wasm")]
 pub mod wasm;

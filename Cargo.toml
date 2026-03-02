@@ -18,6 +18,13 @@ chrono = "0.4.34"
 wasm-bindgen = { version = "0.2", optional = true }
 console_error_panic_hook = { version = "0.1", optional = true }
 
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+# STWO Cairo proof verification dependencies.
+anyhow = "1.0.98"
+cairo-air = { git = "https://github.com/software-mansion-labs/stwo-cairo.git", rev = "d8549be8c0a5f041c9f43cdb2064785ac0596902" }
+starknet-ff = "0.3.7"
+stwo = { git = "https://github.com/starkware-libs/stwo", rev = "45d0180", default-features = false }
+
 [features]
 default = []
 wasm = ["wasm-bindgen", "console_error_panic_hook"]

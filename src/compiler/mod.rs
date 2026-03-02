@@ -18,8 +18,8 @@ use crate::opcodes::{
     OP_INSPECTOUTPUTVALUE, OP_INSPECTVERSION, OP_LE32TOLE64, OP_LE64TOSCRIPTNUM, OP_LESSTHAN,
     OP_LESSTHAN64, OP_LESSTHANOREQUAL, OP_LESSTHANOREQUAL64, OP_MUL64, OP_NEG64, OP_NIP, OP_NOT,
     OP_PUSHCURRENTINPUTINDEX, OP_SCRIPTNUMTOLE64, OP_SHA256, OP_SHA256FINALIZE,
-    OP_SHA256INITIALIZE, OP_SHA256UPDATE, OP_SUB64, OP_TWEAKVERIFY, OP_TXHASH, OP_TXWEIGHT,
-    OP_VERIFY,
+    OP_SHA256INITIALIZE, OP_SHA256UPDATE, OP_STARK_VERIFY, OP_SUB64, OP_TWEAKVERIFY, OP_TXHASH,
+    OP_TXWEIGHT, OP_VERIFY,
 };
 use crate::parser;
 use chrono::Utc;
@@ -137,6 +137,7 @@ fn expression_uses_introspection(expr: &Expression) -> bool {
         Expression::CheckSigExpr { .. } => false,
         Expression::CheckSigFromStackExpr { .. } => false,
         Expression::CheckSigFromStackVerify { .. } => false,
+        Expression::StarkVerify { .. } => false,
     }
 }
 
@@ -572,7 +573,9 @@ fn requirement_to_statement(req: &Requirement) -> RequireStatement {
         },
         Requirement::Comparison { left, .. } => {
             // Detect asset-related comparisons
-            let req_type = if contains_asset_lookup(left) {
+            let req_type = if matches!(left, Expression::StarkVerify { .. }) {
+                "starkVerify"
+            } else if contains_asset_lookup(left) {
                 "assetCheck"
             } else if contains_group_expression(left) {
                 "groupCheck"
@@ -907,6 +910,13 @@ fn generate_expression_asm(expr: &Expression, asm: &mut Vec<String>) {
             asm.push(format!("<{}>", pubkey));
             asm.push(format!("<{}>", signature));
             asm.push(OP_CHECKSIGFROMSTACKVERIFY.to_string());
+        }
+        Expression::StarkVerify {
+            proof,
+            public_inputs,
+            verification_key,
+        } => {
+            emit_stark_verify_asm(proof, public_inputs, verification_key, asm);
         }
         Expression::AssetLookup {
             source,
@@ -1409,7 +1419,26 @@ fn emit_expression_asm(expr: &Expression, asm: &mut Vec<String>) {
             asm.push(format!("<{}>", signature));
             asm.push(OP_CHECKSIGFROMSTACKVERIFY.to_string());
         }
+        Expression::StarkVerify {
+            proof,
+            public_inputs,
+            verification_key,
+        } => {
+            emit_stark_verify_asm(proof, public_inputs, verification_key, asm);
+        }
     }
+}
+
+fn emit_stark_verify_asm(
+    proof: &str,
+    public_inputs: &str,
+    verification_key: &str,
+    asm: &mut Vec<String>,
+) {
+    asm.push(format!("<{}>", proof));
+    asm.push(format!("<{}>", public_inputs));
+    asm.push(format!("<{}>", verification_key));
+    asm.push(OP_STARK_VERIFY.to_string());
 }
 
 /// Emit assembly for tx.input.current property access

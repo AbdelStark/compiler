@@ -25,3 +25,9 @@ for (const f of files) {
 fs.writeFileSync('$OUTPUT', out);
 console.log('  Written ' + files.length + ' contracts to contracts.js');
 "
+
+# Ensure Stark verifier demo is available in the playground bundle.
+if ! rg -q "export const stark_verifier" "$OUTPUT"; then
+  echo "error: examples/stark_verifier.ark was not exported to contracts.js" >&2
+  exit 1
+fi

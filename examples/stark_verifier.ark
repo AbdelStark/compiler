@@ -1,0 +1,11 @@
+options {
+  server = server;
+  exit = 144;
+}
+
+contract StarkVerifier(pubkey owner) {
+  function unlock(signature ownerSig, bytes proof, bytes publicInputs, bytes verificationKey) {
+    require(checkSig(ownerSig, owner));
+    require(verifyStarkProof(proof, publicInputs, verificationKey));
+  }
+}

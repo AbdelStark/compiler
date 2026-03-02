@@ -46,6 +46,7 @@ pub const OP_SHA256: &str = "OP_SHA256";
 pub const OP_SHA256UPDATE: &str = "OP_SHA256UPDATE";
 pub const OP_SHA256INITIALIZE: &str = "OP_SHA256INITIALIZE";
 pub const OP_SHA256FINALIZE: &str = "OP_SHA256FINALIZE";
+pub const OP_STARK_VERIFY: &str = "OP_STARK_VERIFY";
 
 // Stack manipulation
 pub const OP_DROP: &str = "OP_DROP";
