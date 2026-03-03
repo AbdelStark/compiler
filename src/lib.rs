@@ -4,7 +4,6 @@ pub mod opcodes;
 pub mod parser;
 pub mod runtime;
 
-#[cfg(feature = "wasm")]
 pub mod wasm;
 
 pub use models::{Contract, ContractJson, Expression, Function, Parameter, Requirement};

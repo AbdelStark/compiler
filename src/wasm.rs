@@ -6,10 +6,11 @@
 use std::collections::HashMap;
 
 use serde::{Deserialize, Serialize};
+#[cfg(feature = "wasm")]
 use wasm_bindgen::prelude::*;
 
 /// Initialize panic hook for better error messages in the browser console
-#[wasm_bindgen(start)]
+#[cfg_attr(feature = "wasm", wasm_bindgen(start))]
 pub fn init() {
     #[cfg(feature = "wasm")]
     console_error_panic_hook::set_once();
@@ -22,7 +23,7 @@ pub fn init() {
 ///
 /// # Returns
 /// A JSON string containing the compiled contract, or an error message
-#[wasm_bindgen]
+#[cfg_attr(feature = "wasm", wasm_bindgen)]
 pub fn compile(source: &str) -> Result<String, String> {
     match crate::compiler::compile(source) {
         Ok(contract_json) => serde_json::to_string_pretty(&contract_json)
@@ -32,7 +33,7 @@ pub fn compile(source: &str) -> Result<String, String> {
 }
 
 /// Get the compiler version
-#[wasm_bindgen]
+#[cfg_attr(feature = "wasm", wasm_bindgen)]
 pub fn version() -> String {
     env!("CARGO_PKG_VERSION").to_string()
 }
@@ -44,7 +45,7 @@ pub fn version() -> String {
 ///
 /// # Returns
 /// `true` if the source is valid, otherwise returns an error message
-#[wasm_bindgen]
+#[cfg_attr(feature = "wasm", wasm_bindgen)]
 pub fn validate(source: &str) -> Result<bool, String> {
     match crate::compile(source) {
         Ok(_) => Ok(true),
@@ -256,7 +257,7 @@ fn execute_contract_json_impl(
 /// - `bindings_json`: `""`
 /// - `strict_placeholders`: `false`
 /// - `context_strict`: `false`
-#[wasm_bindgen]
+#[cfg_attr(feature = "wasm", wasm_bindgen)]
 pub fn execute_contract_json(
     contract_json: &str,
     function_name: &str,
@@ -277,7 +278,10 @@ pub fn execute_contract_json(
 ///
 /// `bindings_json` must be a JSON object with values shaped like:
 /// `{ "type": "int|bool|bytes_hex|bytes_utf8|symbol", "value": ... }`.
-#[wasm_bindgen(js_name = execute_contract_json_with_options)]
+#[cfg_attr(
+    feature = "wasm",
+    wasm_bindgen(js_name = execute_contract_json_with_options)
+)]
 pub fn execute_contract_json_with_options(
     contract_json: &str,
     function_name: &str,
@@ -326,7 +330,7 @@ fn execute_source_impl(
 /// - `bindings_json`: `""`
 /// - `strict_placeholders`: `false`
 /// - `context_strict`: `false`
-#[wasm_bindgen]
+#[cfg_attr(feature = "wasm", wasm_bindgen)]
 pub fn execute_source(
     source: &str,
     function_name: &str,
@@ -336,7 +340,7 @@ pub fn execute_source(
 }
 
 /// Compile Ark source and execute one function path with explicit options.
-#[wasm_bindgen(js_name = execute_source_with_options)]
+#[cfg_attr(feature = "wasm", wasm_bindgen(js_name = execute_source_with_options))]
 pub fn execute_source_with_options(
     source: &str,
     function_name: &str,

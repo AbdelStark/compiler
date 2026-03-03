@@ -1,5 +1,3 @@
-#![cfg(feature = "wasm")]
-
 #[test]
 fn wasm_context_json_propagated_execute_contract_json_uses_context_txid() {
     let contract_json = r#"{
