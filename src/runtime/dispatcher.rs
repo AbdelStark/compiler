@@ -20,6 +20,8 @@ enum IoSource {
     Output,
 }
 
+const SHA256_CTX_PREFIX: &[u8] = b"sha256ctx:";
+
 impl OpcodeDispatcher {
     pub fn dispatch(
         opcode: &str,
@@ -140,23 +142,28 @@ impl OpcodeDispatcher {
             }
             "OP_SHA256INITIALIZE" => {
                 let data = vm.stack.pop_main()?;
-                let digest = Sha256::digest(stack_value_to_bytes(&data));
-                vm.stack.push_main(StackValue::Bytes(digest.to_vec()))?;
+                let mut encoded =
+                    Vec::with_capacity(SHA256_CTX_PREFIX.len() + stack_value_to_bytes(&data).len());
+                encoded.extend_from_slice(SHA256_CTX_PREFIX);
+                encoded.extend_from_slice(&stack_value_to_bytes(&data));
+                vm.stack.push_main(StackValue::Bytes(encoded))?;
                 Ok(DispatchOutcome::Advance)
             }
             "OP_SHA256UPDATE" => {
                 let chunk = vm.stack.pop_main()?;
                 let ctx = vm.stack.pop_main()?;
-                let mut data = stack_value_to_bytes(&ctx);
+                let mut data = Self::decode_sha256_ctx(&ctx)?;
                 data.extend_from_slice(&stack_value_to_bytes(&chunk));
-                let digest = Sha256::digest(data);
-                vm.stack.push_main(StackValue::Bytes(digest.to_vec()))?;
+                let mut encoded = Vec::with_capacity(SHA256_CTX_PREFIX.len() + data.len());
+                encoded.extend_from_slice(SHA256_CTX_PREFIX);
+                encoded.extend_from_slice(&data);
+                vm.stack.push_main(StackValue::Bytes(encoded))?;
                 Ok(DispatchOutcome::Advance)
             }
             "OP_SHA256FINALIZE" => {
                 let chunk = vm.stack.pop_main()?;
                 let ctx = vm.stack.pop_main()?;
-                let mut data = stack_value_to_bytes(&ctx);
+                let mut data = Self::decode_sha256_ctx(&ctx)?;
                 data.extend_from_slice(&stack_value_to_bytes(&chunk));
                 let digest = Sha256::digest(data);
                 vm.stack.push_main(StackValue::Bytes(digest.to_vec()))?;
@@ -806,7 +813,7 @@ impl OpcodeDispatcher {
                         format!("input index {io_index} is out of bounds"),
                     )
                 })?;
-                Self::lookup_asset_index(&input.assets, txid.as_slice(), gidx)
+                Self::lookup_asset_amount(&input.assets, txid.as_slice(), gidx)
             }
             IoSource::Output => {
                 let output = env.tx_context.output_at(io_index).ok_or_else(|| {
@@ -815,7 +822,7 @@ impl OpcodeDispatcher {
                         format!("output index {io_index} is out of bounds"),
                     )
                 })?;
-                Self::lookup_asset_index(&output.assets, txid.as_slice(), gidx)
+                Self::lookup_asset_amount(&output.assets, txid.as_slice(), gidx)
             }
         };
 
@@ -864,11 +871,11 @@ impl OpcodeDispatcher {
         Ok(())
     }
 
-    fn lookup_asset_index(assets: &[AssetEntry], txid: &[u8], gidx: u16) -> i64 {
+    fn lookup_asset_amount(assets: &[AssetEntry], txid: &[u8], gidx: u16) -> i64 {
         assets
             .iter()
-            .position(|asset| asset.txid == txid && asset.gidx == gidx)
-            .map(|idx| idx as i64)
+            .find(|asset| asset.txid == txid && asset.gidx == gidx)
+            .map(|asset| asset.amount)
             .unwrap_or(-1)
     }
 
@@ -887,6 +894,20 @@ impl OpcodeDispatcher {
         assets
             .iter()
             .find(|asset| asset.txid == txid && asset.gidx == gidx)
+    }
+
+    fn decode_sha256_ctx(value: &StackValue) -> Result<Vec<u8>, RuntimeError> {
+        let raw = stack_value_to_bytes(value);
+        if raw.len() >= SHA256_CTX_PREFIX.len()
+            && raw[..SHA256_CTX_PREFIX.len()] == *SHA256_CTX_PREFIX
+        {
+            return Ok(raw[SHA256_CTX_PREFIX.len()..].to_vec());
+        }
+
+        Err(RuntimeError::new(
+            RuntimeErrorCode::InvalidNumericEncoding,
+            "invalid SHA256 context encoding",
+        ))
     }
 }
 

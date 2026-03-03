@@ -153,9 +153,7 @@ Current known deltas:
 - `checksig_verify_success`
 - `checksigfromstack_verify_success`
 - `checkmultisig_success`
-- `streaming_sha_chain`
 - `introspection_txhash_equal`
-- `asset_lookup_roundtrip`
 
 Interpretation:
 - These are semantic differences between current in-process runtime behavior and current introspector engine behavior.

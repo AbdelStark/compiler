@@ -69,10 +69,14 @@ This board maps to the required tags above by execution phase:
   - Extended introspector adapter opcode coverage for full corpus probing.
   - Added full-corpus delta matrix test `tests/runtime_external_introspector_delta_matrix_test.rs`.
   - Locked current known semantic deltas set for explicit convergence tracking.
+- `[COMPLETED]` R25: Delta closure batch-1 (streaming hash + asset lookup):
+  - Runtime streaming SHA256 context semantics now align with introspector style initialize/update/finalize chaining.
+  - `OP_INSPECTINASSETLOOKUP` / `OP_INSPECTOUTASSETLOOKUP` now return amount (or `-1`) instead of asset index.
+  - Updated parity vectors and runtime tests accordingly, shrinking full-corpus introspector delta set.
 
 ## Active Focus
 Current target: closed.
-Next transition: close R24 delta set items one by one (checksig, checksigfromstack, checkmultisig, streaming hash, txhash introspection, out-asset lookup semantics).
+Next transition: close remaining R24 delta set items (checksig, checksigfromstack, checkmultisig, txhash introspection).
 
 ## Open Risks
 - Introspection and streaming-hash semantics are implemented concretely for in-process runtime context, but still need parity coverage against real `arkd`/`introspector` adapter outputs (current fallback adapter uses this repo runtime implementation in a separate process).
@@ -91,3 +95,4 @@ Next transition: close R24 delta set items one by one (checksig, checksigfromsta
 - `[COMPLETED]` `cargo test --test runtime_external_parity_audit_test` passed with in-repo external adapter path fallback.
 - `[COMPLETED]` `ARKADE_ENABLE_INTROSPECTOR_PARITY=1 cargo test --test runtime_external_introspector_parity_test` passed.
 - `[COMPLETED]` `ARKADE_ENABLE_INTROSPECTOR_PARITY=1 cargo test --test runtime_external_introspector_delta_matrix_test` passed.
+- `[COMPLETED]` `cargo test --test runtime_extended_opcodes_test --test runtime_introspection_test --test runtime_parity_vectors_test` passed after R25 semantic alignment patch.

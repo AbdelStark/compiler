@@ -5,7 +5,7 @@
     "a": { "type": "bytes_utf8", "value": "alpha" },
     "b": { "type": "bytes_utf8", "value": "beta" },
     "c": { "type": "bytes_utf8", "value": "gamma" },
-    "expected": { "type": "bytes_hex", "value": "1647a134cf49d977dc9710c59b151b9e545c027c72745147fbf4b97dd38306a2" }
+    "expected": { "type": "bytes_hex", "value": "c04a9408aace4db24979fa5cd28ad7aa454d7b97a30e9eb561387e7b53c33abc" }
   },
   "expected": {
     "kind": "script_true",

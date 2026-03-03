@@ -12,12 +12,10 @@ use tempfile::NamedTempFile;
 use parity_support::{load_vectors, materialize_bindings};
 
 const KNOWN_INTROSPECTOR_DELTAS: &[&str] = &[
-    "asset_lookup_roundtrip",
     "checkmultisig_success",
     "checksig_verify_success",
     "checksigfromstack_verify_success",
     "introspection_txhash_equal",
-    "streaming_sha_chain",
 ];
 
 #[derive(Debug, Serialize)]

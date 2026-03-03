@@ -54,7 +54,6 @@ fn asset_lookup_and_asset_at_roundtrip() {
 
     let script = vec![
         "OP_0".to_string(),
-        "OP_DUP".to_string(),
         "<asset_txid>".to_string(),
         "<asset_gidx>".to_string(),
         "OP_INSPECTOUTASSETLOOKUP".to_string(),
@@ -63,11 +62,12 @@ fn asset_lookup_and_asset_at_roundtrip() {
         "OP_EQUAL".to_string(),
         "OP_NOT".to_string(),
         "OP_VERIFY".to_string(),
+        "OP_0".to_string(),
+        "OP_0".to_string(),
         "OP_INSPECTOUTASSETAT".to_string(),
         "OP_NIP".to_string(),
         "OP_NIP".to_string(),
-        "OP_0".to_string(),
-        "OP_GREATERTHAN".to_string(),
+        "OP_EQUAL".to_string(),
     ];
 
     let mut vm = VMState::new(script);

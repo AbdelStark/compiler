@@ -1,6 +1,6 @@
 {
   "name": "asset_lookup_roundtrip",
-  "asm": ["OP_0", "OP_DUP", "<asset_txid>", "<asset_gidx>", "OP_INSPECTOUTASSETLOOKUP", "OP_DUP", "OP_1NEGATE", "OP_EQUAL", "OP_NOT", "OP_VERIFY", "OP_INSPECTOUTASSETAT", "OP_NIP", "OP_NIP", "OP_0", "OP_GREATERTHAN"],
+  "asm": ["OP_0", "<asset_txid>", "<asset_gidx>", "OP_INSPECTOUTASSETLOOKUP", "OP_DUP", "OP_1NEGATE", "OP_EQUAL", "OP_NOT", "OP_VERIFY", "OP_0", "OP_0", "OP_INSPECTOUTASSETAT", "OP_NIP", "OP_NIP", "OP_EQUAL"],
   "bindings": {
     "asset_txid": { "type": "tx_group_txid", "index": 0 },
     "asset_gidx": { "type": "tx_group_gidx", "index": 0 }

@@ -10,9 +10,8 @@ fn streaming_sha256_opcodes_runtime() {
     let chunk = b"beta".to_vec();
     let last = b"gamma".to_vec();
 
-    let init = Sha256::digest(&data).to_vec();
-    let updated = Sha256::digest([init.as_slice(), chunk.as_slice()].concat()).to_vec();
-    let final_hash = Sha256::digest([updated.as_slice(), last.as_slice()].concat()).to_vec();
+    let final_hash =
+        Sha256::digest([data.as_slice(), chunk.as_slice(), last.as_slice()].concat()).to_vec();
 
     let mut env = ExecutionEnv::default();
     env.bindings
