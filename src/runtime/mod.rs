@@ -25,6 +25,7 @@ pub struct LoadedProgram {
     pub function_name: String,
     pub server_variant: bool,
     pub asm: Vec<String>,
+    pub param_types: HashMap<String, String>,
 }
 
 pub fn load_program_from_file(
@@ -59,11 +60,20 @@ pub fn load_program_from_contract(
     server_variant: bool,
 ) -> Result<LoadedProgram, RuntimeError> {
     let function = select_function(contract, function_name, server_variant)?;
+    let mut param_types: HashMap<String, String> = HashMap::new();
+    for input in &contract.parameters {
+        param_types.insert(input.name.clone(), input.param_type.clone());
+    }
+    for input in &function.function_inputs {
+        param_types.insert(input.name.clone(), input.param_type.clone());
+    }
+
     Ok(LoadedProgram {
         contract_name: contract.name.clone(),
         function_name: function.name.clone(),
         server_variant,
         asm: function.asm.clone(),
+        param_types,
     })
 }
 
@@ -84,6 +94,12 @@ pub fn default_bindings_for_program(program: &LoadedProgram) -> HashMap<String, 
     }
 
     for name in &placeholders {
+        if let Some(param_type) = program.param_types.get(name) {
+            if apply_typed_default_binding(name, param_type, &mut bindings) {
+                continue;
+            }
+        }
+
         if name == "preimage" {
             bindings.insert(name.clone(), StackValue::Bytes(b"hello".to_vec()));
             continue;
@@ -208,6 +224,50 @@ fn is_probable_numeric(name: &str) -> bool {
         || lower == "i"
         || lower == "j"
         || lower == "k"
+}
+
+fn apply_typed_default_binding(
+    name: &str,
+    param_type: &str,
+    bindings: &mut HashMap<String, StackValue>,
+) -> bool {
+    match param_type {
+        "pubkey" => {
+            ensure_pubkey_binding(name, bindings);
+            true
+        }
+        "signature" => {
+            bindings
+                .entry(name.to_string())
+                .or_insert_with(|| StackValue::Bytes(vec![0u8; 64]));
+            true
+        }
+        "bytes32" => {
+            bindings
+                .entry(name.to_string())
+                .or_insert_with(|| StackValue::Bytes(vec![0u8; 32]));
+            true
+        }
+        "bytes" => {
+            bindings
+                .entry(name.to_string())
+                .or_insert_with(|| StackValue::Bytes(Vec::new()));
+            true
+        }
+        "int" | "value" => {
+            bindings
+                .entry(name.to_string())
+                .or_insert_with(|| StackValue::Int(0));
+            true
+        }
+        "bool" => {
+            bindings
+                .entry(name.to_string())
+                .or_insert_with(|| StackValue::Bool(true));
+            true
+        }
+        _ => false,
+    }
 }
 
 fn is_probable_pubkey(name: &str) -> bool {

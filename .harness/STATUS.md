@@ -48,6 +48,10 @@ This board maps to the required tags above by execution phase:
   - CLI: `arkadec debug ... --breakpoint <ip>`
   - TUI: toggle breakpoint key `b`, continue-to-breakpoint semantics, breakpoint markers in Script pane
   - validation in `tests/runtime_cli_debug_boot_test.rs`
+- `[COMPLETED]` R20: ABI-aware default binding inference:
+  - `LoadedProgram` now carries parameter type metadata from artifact ABI.
+  - Runtime default bindings use ABI types (`pubkey`, `signature`, `bytes*`, `int`, `bool`) before heuristics.
+  - validation in `tests/runtime_binding_inference_test.rs`.
 
 ## Active Focus
 Current target: closed.
@@ -64,3 +68,4 @@ Next transition: runtime phase-2 parity-hardening and debugger breakpoint milest
 - `[COMPLETED]` `cargo test --test runtime_cli_run_test --test runtime_cli_debug_boot_test --test runtime_cli_matrix_test` passed.
 - `[COMPLETED]` `cargo test --test runtime_opcode_surface_test --test runtime_determinism_test --test runtime_failure_classification_test --test runtime_cli_debug_boot_test` passed.
 - `[COMPLETED]` full `cargo test` passed after breakpoint/debugger and parity-hardening additions.
+- `[COMPLETED]` full `cargo test` passed after ABI-aware binding inference addition.
