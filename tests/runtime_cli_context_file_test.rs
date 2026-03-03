@@ -68,7 +68,6 @@ fn run_with_context_file_cli_run_uses_fixture_tx_context_from_file() {
         .as_str()
         .expect("tx_hash should be a string");
     assert_eq!(tx_hash, "abcd1234");
-    assert_eq!(format!("0x{tx_hash}"), "0xabcd1234");
     assert_eq!(with_context_json["result"]["outcome"], "script_true");
 
     let without_context = Command::new(env!("CARGO_BIN_EXE_arkadec"))
