@@ -1,4 +1,5 @@
 use std::fs;
+use std::process::Command;
 
 use arkade_compiler::runtime::env::ExecutionEnv;
 use arkade_compiler::runtime::vm::VmOutcome;
@@ -66,4 +67,71 @@ fn example_matrix_is_deterministic_and_runtime_safe() {
     if !failures.is_empty() {
         panic!("determinism failures:\n{}", failures.join("\n"));
     }
+}
+
+#[test]
+fn context_file_execution_is_deterministic_for_identical_contract_context_and_bindings() {
+    let temp = tempfile::tempdir().expect("tempdir should be created");
+    let contract_path = temp.path().join("contract.json");
+    let fixture_path = temp.path().join("fixture.json");
+
+    fs::write(
+        &contract_path,
+        r#"{
+  "contractName": "determinism_fixture_check",
+  "constructorInputs": [],
+  "functions": [
+    {
+      "name": "claim",
+      "functionInputs": [],
+      "serverVariant": false,
+      "require": [],
+      "asm": ["<counter>", "7", "OP_EQUALVERIFY", "OP_TXHASH", "abcd1234", "OP_EQUAL"]
+    }
+  ]
+}"#,
+    )
+    .expect("contract fixture should be written");
+
+    fs::write(
+        &fixture_path,
+        r#"{
+  "tx_context": {
+    "txid": "0xabcd1234"
+  }
+}"#,
+    )
+    .expect("context fixture should be written");
+
+    let run_once = || {
+        Command::new(env!("CARGO_BIN_EXE_arkadec"))
+            .arg("run")
+            .arg(&contract_path)
+            .arg("--function")
+            .arg("claim")
+            .arg("--variant")
+            .arg("false")
+            .arg("--bind")
+            .arg("counter=7")
+            .arg("--context-file")
+            .arg(&fixture_path)
+            .arg("--output")
+            .arg("json")
+            .output()
+            .expect("failed to run cli with context fixture")
+    };
+
+    let first = run_once();
+    let second = run_once();
+
+    assert_eq!(first.status.code(), Some(0));
+    assert_eq!(second.status.code(), Some(0));
+
+    let first_json: serde_json::Value =
+        serde_json::from_slice(&first.stdout).expect("first run stdout should be valid json");
+    let second_json: serde_json::Value =
+        serde_json::from_slice(&second.stdout).expect("second run stdout should be valid json");
+
+    assert_eq!(first_json, second_json);
+    assert_eq!(first_json["result"]["outcome"], "script_true");
 }
