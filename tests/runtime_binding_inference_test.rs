@@ -69,7 +69,7 @@ fn scenario_4_binding_inference_typed_bytes_defaults_to_empty_bytes() {
 }
 
 #[test]
-fn scenario_5_unknown_placeholder_emits_warning_diagnostics() {
+fn scenario_5_unknown_placeholder_default_api_keeps_symbolic_binding() {
     let program = LoadedProgram {
         contract_name: "Warnings".to_string(),
         function_name: "run".to_string(),
@@ -78,13 +78,31 @@ fn scenario_5_unknown_placeholder_emits_warning_diagnostics() {
         param_types: HashMap::new(),
     };
 
-    let (bindings, warnings) =
-        arkade_compiler::runtime::default_bindings_for_program_with_diagnostics(&program);
+    let bindings = arkade_compiler::runtime::default_bindings_for_program(&program);
 
     assert_eq!(
         bindings.get("mysteryToken"),
         Some(&StackValue::Symbol("mysteryToken".to_string()))
     );
+    assert!(
+        !matches!(bindings.get("mysteryToken"), Some(StackValue::Int(_))),
+        "unknown placeholders must not be silently coerced to numeric defaults"
+    );
+}
+
+#[test]
+fn unknown_placeholder_is_reported_by_diagnostics_variant() {
+    let program = LoadedProgram {
+        contract_name: "Warnings".to_string(),
+        function_name: "run".to_string(),
+        server_variant: true,
+        asm: vec!["<mysteryToken>".to_string()],
+        param_types: HashMap::new(),
+    };
+
+    let (_bindings, warnings) =
+        arkade_compiler::runtime::default_bindings_for_program_with_diagnostics(&program);
+
     assert!(
         warnings
             .iter()
