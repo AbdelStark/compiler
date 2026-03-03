@@ -999,8 +999,7 @@ fn generate_expression_asm(expr: &Expression, asm: &mut Vec<String>) {
         }
         Expression::ArrayIndex { array, index } => {
             if let Err(err) = emit_array_index_access_asm(array, index, asm) {
-                // Defensive fallback: validation should reject unsupported shapes earlier.
-                eprintln!("{err}");
+                unreachable!("validation should have rejected array index before codegen: {err}");
             }
         }
         Expression::ArrayLength(_) => {
@@ -1286,9 +1285,15 @@ fn emit_array_index_access_asm(
     asm: &mut Vec<String>,
 ) -> Result<(), String> {
     match (array, index) {
-        (Expression::Variable(array_name), Expression::Literal(index_value))
-        | (Expression::Variable(array_name), Expression::Variable(index_value)) => {
+        (Expression::Variable(array_name), Expression::Literal(index_value)) => {
             asm.push(format!("<{}_{}>", array_name, index_value));
+            Ok(())
+        }
+        (Expression::Variable(array_name), Expression::Variable(index_name)) => {
+            // Validation only allows variable indices for active loop index variables.
+            // Loop substitution should usually lower these to literals first, but if one
+            // reaches codegen we still emit the flattened placeholder shape.
+            asm.push(format!("<{}_{}>", array_name, index_name));
             Ok(())
         }
         _ => Err(format!(
@@ -1519,8 +1524,7 @@ fn emit_expression_asm(expr: &Expression, asm: &mut Vec<String>) {
         }
         Expression::ArrayIndex { array, index } => {
             if let Err(err) = emit_array_index_access_asm(array, index, asm) {
-                // Defensive fallback: validation should reject unsupported shapes earlier.
-                eprintln!("{err}");
+                unreachable!("validation should have rejected array index before codegen: {err}");
             }
         }
         Expression::ArrayLength(_) => {
@@ -2258,21 +2262,44 @@ mod tests {
         let index = Expression::Literal("0".to_string());
         let mut asm = Vec::new();
 
-        let panic_result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            emit_array_index_access_asm(&array, &index, &mut asm)
-        }));
-        assert!(
-            panic_result.is_ok(),
-            "unsupported array index shapes should return an error, not panic"
-        );
-
-        let emission_result =
-            panic_result.expect("codegen helper should not panic for unsupported array indexes");
+        let emission_result = emit_array_index_access_asm(&array, &index, &mut asm);
         let error_message =
             emission_result.expect_err("unsupported array index expressions must return Err");
         assert!(
             error_message.contains("unsupported array index expression"),
             "expected precise unsupported-array-index error, got: {error_message}"
         );
+    }
+
+    #[test]
+    #[should_panic(expected = "validation should have rejected array index before codegen")]
+    fn generate_expression_asm_panics_when_array_index_validation_is_missed() {
+        let mut asm = Vec::new();
+        let expression = Expression::ArrayIndex {
+            array: Box::new(Expression::BinaryOp {
+                left: Box::new(Expression::Literal("1".to_string())),
+                op: "+".to_string(),
+                right: Box::new(Expression::Literal("2".to_string())),
+            }),
+            index: Box::new(Expression::Literal("0".to_string())),
+        };
+
+        generate_expression_asm(&expression, &mut asm);
+    }
+
+    #[test]
+    #[should_panic(expected = "validation should have rejected array index before codegen")]
+    fn emit_expression_asm_panics_when_array_index_validation_is_missed() {
+        let mut asm = Vec::new();
+        let expression = Expression::ArrayIndex {
+            array: Box::new(Expression::BinaryOp {
+                left: Box::new(Expression::Literal("1".to_string())),
+                op: "+".to_string(),
+                right: Box::new(Expression::Literal("2".to_string())),
+            }),
+            index: Box::new(Expression::Literal("0".to_string())),
+        };
+
+        emit_expression_asm(&expression, &mut asm);
     }
 }
