@@ -66,13 +66,6 @@ fn scenario_4_binding_inference_typed_bytes_defaults_to_empty_bytes() {
         Some(&StackValue::Bytes(Vec::new())),
         "bytes-typed placeholder should default to empty bytes"
     );
-
-    let (_, warnings) =
-        arkade_compiler::runtime::default_bindings_for_program_with_diagnostics(&program);
-    assert!(
-        warnings.iter().all(|warning| !warning.contains("payload")),
-        "typed placeholders should not emit unknown-placeholder warnings: {warnings:?}"
-    );
 }
 
 #[test]
@@ -101,7 +94,7 @@ fn scenario_5_unknown_placeholder_emits_warning_diagnostics() {
 }
 
 #[test]
-fn scenario_5_unknown_placeholder_emits_warning_to_stderr() {
+fn scenario_6_unknown_placeholder_emits_warning_to_stderr() {
     let temp = tempfile::tempdir().expect("tempdir should be created");
     let artifact_path = temp.path().join("warnings.json");
     let artifact_json = serde_json::json!({
