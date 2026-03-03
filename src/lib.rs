@@ -2,6 +2,7 @@ pub mod compiler;
 pub mod models;
 pub mod opcodes;
 pub mod parser;
+pub mod runtime;
 
 #[cfg(feature = "wasm")]
 pub mod wasm;
