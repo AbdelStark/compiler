@@ -1,29 +1,177 @@
 use std::collections::HashMap;
-use std::sync::Arc;
+
+use secp256k1::ecdsa::Signature as EcdsaSignature;
+use secp256k1::schnorr::Signature as SchnorrSignature;
+use secp256k1::{Message, PublicKey, Secp256k1, SecretKey, XOnlyPublicKey};
+use sha2::{Digest, Sha256};
 
 use crate::runtime::error::{RuntimeError, RuntimeErrorCode};
 use crate::runtime::value::StackValue;
 
-pub trait ChecksigProvider {
-    fn check_sig(
-        &self,
-        pubkey: &StackValue,
-        signature: &StackValue,
-        message: Option<&StackValue>,
-    ) -> bool;
+#[derive(Debug, Clone)]
+pub struct AssetEntry {
+    pub txid: Vec<u8>,
+    pub gidx: u16,
+    pub amount: i64,
+    pub data: Vec<u8>,
+    pub control: Vec<u8>,
+    pub metadata_hash: Vec<u8>,
+    pub asset_id: Vec<u8>,
 }
 
-#[derive(Debug, Default)]
-pub struct MockChecksigProvider;
+#[derive(Debug, Clone)]
+pub struct TxInput {
+    pub value: i64,
+    pub script_pubkey: Vec<u8>,
+    pub sequence: i64,
+    pub outpoint: Vec<u8>,
+    pub issuance: Vec<u8>,
+    pub assets: Vec<AssetEntry>,
+}
 
-impl ChecksigProvider for MockChecksigProvider {
-    fn check_sig(
-        &self,
-        _pubkey: &StackValue,
-        _signature: &StackValue,
-        _message: Option<&StackValue>,
-    ) -> bool {
-        true
+#[derive(Debug, Clone)]
+pub struct TxOutput {
+    pub value: i64,
+    pub script_pubkey: Vec<u8>,
+    pub nonce: Vec<u8>,
+    pub assets: Vec<AssetEntry>,
+}
+
+#[derive(Debug, Clone)]
+pub struct AssetGroup {
+    pub txid: Vec<u8>,
+    pub gidx: u16,
+    pub sum_inputs: i64,
+    pub sum_outputs: i64,
+    pub num_inputs: i64,
+    pub num_outputs: i64,
+    pub control: Vec<u8>,
+    pub metadata_hash: Vec<u8>,
+    pub asset_id: Vec<u8>,
+}
+
+#[derive(Debug, Clone)]
+pub struct TxContext {
+    pub tx_hash: Vec<u8>,
+    pub version: i64,
+    pub locktime: i64,
+    pub weight: i64,
+    pub current_input_index: usize,
+    pub inputs: Vec<TxInput>,
+    pub outputs: Vec<TxOutput>,
+    pub asset_groups: Vec<AssetGroup>,
+}
+
+impl TxContext {
+    pub fn sample() -> Self {
+        let mk32 = |tag: &str| Sha256::digest(tag.as_bytes()).to_vec();
+        let mut groups: Vec<AssetGroup> = Vec::new();
+
+        for idx in 0..4u16 {
+            let txid = mk32(&format!("asset-group-txid-{idx}"));
+            let metadata_hash = mk32(&format!("metadata-{idx}"));
+            let control = format!("control-{idx}").into_bytes();
+            let mut asset_id_seed = txid.clone();
+            asset_id_seed.extend_from_slice(&idx.to_le_bytes());
+            let asset_id = Sha256::digest(&asset_id_seed).to_vec();
+
+            groups.push(AssetGroup {
+                txid,
+                gidx: idx,
+                sum_inputs: 10_000 + idx as i64 * 100,
+                sum_outputs: 9_500 + idx as i64 * 100,
+                num_inputs: 2,
+                num_outputs: 2,
+                control,
+                metadata_hash,
+                asset_id,
+            });
+        }
+
+        let input_assets = groups
+            .iter()
+            .enumerate()
+            .map(|(i, g)| AssetEntry {
+                txid: g.txid.clone(),
+                gidx: g.gidx,
+                amount: 5_000 + i as i64,
+                data: format!("in-asset-{i}").into_bytes(),
+                control: g.control.clone(),
+                metadata_hash: g.metadata_hash.clone(),
+                asset_id: g.asset_id.clone(),
+            })
+            .collect::<Vec<_>>();
+
+        let output_assets = groups
+            .iter()
+            .enumerate()
+            .map(|(i, g)| AssetEntry {
+                txid: g.txid.clone(),
+                gidx: g.gidx,
+                amount: 4_750 + i as i64,
+                data: format!("out-asset-{i}").into_bytes(),
+                control: g.control.clone(),
+                metadata_hash: g.metadata_hash.clone(),
+                asset_id: g.asset_id.clone(),
+            })
+            .collect::<Vec<_>>();
+
+        let inputs = (0..4)
+            .map(|i| TxInput {
+                value: 100_000 + i as i64,
+                script_pubkey: format!("input-script-{i}").into_bytes(),
+                sequence: 0xFFFF_FFF0 + i as i64,
+                outpoint: mk32(&format!("outpoint-{i}")),
+                issuance: format!("issuance-{i}").into_bytes(),
+                assets: input_assets.clone(),
+            })
+            .collect::<Vec<_>>();
+
+        let outputs = (0..4)
+            .map(|i| TxOutput {
+                value: 99_000 + i as i64,
+                script_pubkey: format!("output-script-{i}").into_bytes(),
+                nonce: mk32(&format!("nonce-{i}")),
+                assets: output_assets.clone(),
+            })
+            .collect::<Vec<_>>();
+
+        Self {
+            tx_hash: mk32("arkade-runtime-default-tx-hash"),
+            version: 2,
+            locktime: 0,
+            weight: 850,
+            current_input_index: 0,
+            inputs,
+            outputs,
+            asset_groups: groups,
+        }
+    }
+
+    pub fn input_at(&self, index: usize) -> Option<&TxInput> {
+        self.inputs.get(index)
+    }
+
+    pub fn output_at(&self, index: usize) -> Option<&TxOutput> {
+        self.outputs.get(index)
+    }
+
+    pub fn group_at(&self, index: usize) -> Option<&AssetGroup> {
+        self.asset_groups.get(index)
+    }
+
+    pub fn find_group_index(&self, txid: &[u8], gidx: u16) -> i64 {
+        self.asset_groups
+            .iter()
+            .position(|g| g.txid == txid && g.gidx == gidx)
+            .map(|idx| idx as i64)
+            .unwrap_or(-1)
+    }
+}
+
+impl Default for TxContext {
+    fn default() -> Self {
+        Self::sample()
     }
 }
 
@@ -31,7 +179,7 @@ impl ChecksigProvider for MockChecksigProvider {
 pub struct ExecutionEnv {
     pub bindings: HashMap<String, StackValue>,
     pub strict_placeholders: bool,
-    pub checksig: Arc<dyn ChecksigProvider + Send + Sync>,
+    pub tx_context: TxContext,
 }
 
 impl ExecutionEnv {
@@ -39,13 +187,8 @@ impl ExecutionEnv {
         Self {
             bindings: HashMap::new(),
             strict_placeholders: false,
-            checksig: Arc::new(MockChecksigProvider),
+            tx_context: TxContext::default(),
         }
-    }
-
-    pub fn with_binding(mut self, key: impl Into<String>, value: StackValue) -> Self {
-        self.bindings.insert(key.into(), value);
-        self
     }
 
     pub fn resolve_placeholder(&self, key: &str) -> Result<StackValue, RuntimeError> {
@@ -62,10 +205,103 @@ impl ExecutionEnv {
 
         Ok(StackValue::Symbol(key.to_string()))
     }
+
+    pub fn verify_signature(
+        &self,
+        pubkey: &StackValue,
+        signature: &StackValue,
+        message: Option<&StackValue>,
+    ) -> bool {
+        let secp = Secp256k1::verification_only();
+        let pk_bytes = stack_value_to_bytes(pubkey);
+        let sig_bytes = stack_value_to_bytes(signature);
+
+        let parsed_pubkey = match PublicKey::from_slice(&pk_bytes) {
+            Ok(v) => v,
+            Err(_) => return false,
+        };
+
+        let message_bytes = self.signature_message(message);
+        let digest = Sha256::digest(&message_bytes);
+
+        let msg = Message::from_digest(digest.into());
+        if let Ok(ecdsa_sig) = EcdsaSignature::from_der(&sig_bytes) {
+            if secp.verify_ecdsa(msg, &ecdsa_sig, &parsed_pubkey).is_ok() {
+                return true;
+            }
+        }
+
+        if sig_bytes.len() == 64 {
+            if let Ok(schnorr_sig) = SchnorrSignature::from_slice(&sig_bytes) {
+                let (xonly, _) = parsed_pubkey.x_only_public_key();
+                if secp.verify_schnorr(&schnorr_sig, &digest, &xonly).is_ok() {
+                    return true;
+                }
+            }
+        }
+
+        false
+    }
+
+    pub fn verify_multisig(&self, pubkeys: &[StackValue], signatures: &[StackValue]) -> bool {
+        if signatures.len() > pubkeys.len() {
+            return false;
+        }
+
+        signatures
+            .iter()
+            .zip(pubkeys.iter())
+            .all(|(sig, pk)| self.verify_signature(pk, sig, None))
+    }
+
+    pub fn derive_keypair_for_label(label: &str) -> (SecretKey, PublicKey) {
+        let secp = Secp256k1::signing_only();
+        let mut seed = Sha256::digest(label.as_bytes()).to_vec();
+        loop {
+            if let Ok(secret) = SecretKey::from_slice(&seed) {
+                let public = PublicKey::from_secret_key(&secp, &secret);
+                return (secret, public);
+            }
+            seed = Sha256::digest(&seed).to_vec();
+        }
+    }
+
+    pub fn sign_message_for_label(label: &str, message: &[u8]) -> Vec<u8> {
+        let secp = Secp256k1::signing_only();
+        let (secret, _) = Self::derive_keypair_for_label(label);
+        let digest = Sha256::digest(message);
+        let msg = Message::from_digest(digest.into());
+        secp.sign_ecdsa(msg, &secret).serialize_der().to_vec()
+    }
+
+    pub fn xonly_pubkey_for_label(label: &str) -> XOnlyPublicKey {
+        let (_secret, pubkey) = Self::derive_keypair_for_label(label);
+        pubkey.x_only_public_key().0
+    }
+
+    fn signature_message(&self, message: Option<&StackValue>) -> Vec<u8> {
+        message
+            .map(stack_value_to_bytes)
+            .unwrap_or_else(|| self.tx_context.tx_hash.clone())
+    }
 }
 
 impl Default for ExecutionEnv {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+pub fn stack_value_to_bytes(value: &StackValue) -> Vec<u8> {
+    match value {
+        StackValue::Bytes(v) => v.clone(),
+        StackValue::Int(v) => v.to_le_bytes().to_vec(),
+        StackValue::Bool(v) => vec![u8::from(*v)],
+        StackValue::Symbol(v) => {
+            if v.len() % 2 == 0 && !v.is_empty() && v.chars().all(|c| c.is_ascii_hexdigit()) {
+                return hex::decode(v).unwrap_or_else(|_| v.as_bytes().to_vec());
+            }
+            v.as_bytes().to_vec()
+        }
     }
 }

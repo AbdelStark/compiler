@@ -1,6 +1,4 @@
-use std::sync::Arc;
-
-use arkade_compiler::runtime::env::{ChecksigProvider, ExecutionEnv};
+use arkade_compiler::runtime::env::ExecutionEnv;
 use arkade_compiler::runtime::value::StackValue;
 use arkade_compiler::runtime::vm::{VMState, VmOutcome};
 use sha2::{Digest, Sha256};
@@ -29,7 +27,7 @@ fn sha256_equalverify_success() {
 }
 
 #[test]
-fn checksig_mock_success() {
+fn checksig_real_success() {
     let script = vec![
         "<pubkey>".to_string(),
         "<signature>".to_string(),
@@ -37,34 +35,23 @@ fn checksig_mock_success() {
     ];
 
     let mut env = ExecutionEnv::default();
-    env.bindings
-        .insert("pubkey".to_string(), StackValue::Symbol("pk".to_string()));
+    let (_sk, pk) = ExecutionEnv::derive_keypair_for_label("pubkey");
+    let signature = ExecutionEnv::sign_message_for_label("pubkey", &env.tx_context.tx_hash);
+
     env.bindings.insert(
-        "signature".to_string(),
-        StackValue::Symbol("sig".to_string()),
+        "pubkey".to_string(),
+        StackValue::Bytes(pk.serialize().to_vec()),
     );
+    env.bindings
+        .insert("signature".to_string(), StackValue::Bytes(signature));
 
     let mut vm = VMState::new(script);
     let result = vm.run(&env);
     assert_eq!(result.outcome, VmOutcome::ScriptTrue);
 }
 
-#[derive(Debug, Default)]
-struct DenyChecksigProvider;
-
-impl ChecksigProvider for DenyChecksigProvider {
-    fn check_sig(
-        &self,
-        _pubkey: &StackValue,
-        _signature: &StackValue,
-        _message: Option<&StackValue>,
-    ) -> bool {
-        false
-    }
-}
-
 #[test]
-fn checksigverify_failure_is_script_false() {
+fn checksigverify_real_failure_is_script_false() {
     let script = vec![
         "<pubkey>".to_string(),
         "<signature>".to_string(),
@@ -73,15 +60,49 @@ fn checksigverify_failure_is_script_false() {
     ];
 
     let mut env = ExecutionEnv::default();
-    env.checksig = Arc::new(DenyChecksigProvider);
-    env.bindings
-        .insert("pubkey".to_string(), StackValue::Symbol("pk".to_string()));
+    let (_sk, pk) = ExecutionEnv::derive_keypair_for_label("pubkey");
+    let mut signature = ExecutionEnv::sign_message_for_label("pubkey", &env.tx_context.tx_hash);
+    if let Some(first) = signature.first_mut() {
+        *first ^= 0x01;
+    }
+
     env.bindings.insert(
-        "signature".to_string(),
-        StackValue::Symbol("sig".to_string()),
+        "pubkey".to_string(),
+        StackValue::Bytes(pk.serialize().to_vec()),
     );
+    env.bindings
+        .insert("signature".to_string(), StackValue::Bytes(signature));
 
     let mut vm = VMState::new(script);
     let result = vm.run(&env);
     assert_eq!(result.outcome, VmOutcome::ScriptFalse);
+}
+
+#[test]
+fn checksigfromstack_real_success() {
+    let script = vec![
+        "<msg>".to_string(),
+        "<pubkey>".to_string(),
+        "<signature>".to_string(),
+        "OP_CHECKSIGFROMSTACKVERIFY".to_string(),
+        "OP_1".to_string(),
+    ];
+
+    let mut env = ExecutionEnv::default();
+    let (_sk, pk) = ExecutionEnv::derive_keypair_for_label("pubkey");
+    let msg = b"checksigfromstack-message".to_vec();
+    let signature = ExecutionEnv::sign_message_for_label("pubkey", &msg);
+
+    env.bindings
+        .insert("msg".to_string(), StackValue::Bytes(msg));
+    env.bindings.insert(
+        "pubkey".to_string(),
+        StackValue::Bytes(pk.serialize().to_vec()),
+    );
+    env.bindings
+        .insert("signature".to_string(), StackValue::Bytes(signature));
+
+    let mut vm = VMState::new(script);
+    let result = vm.run(&env);
+    assert_eq!(result.outcome, VmOutcome::ScriptTrue);
 }

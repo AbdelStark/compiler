@@ -7,14 +7,14 @@ pub mod telemetry;
 pub mod value;
 pub mod vm;
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::Path;
 
 use sha2::{Digest, Sha256};
 
 use crate::models::{AbiFunction, ContractJson};
-use crate::runtime::env::ExecutionEnv;
+use crate::runtime::env::{stack_value_to_bytes, ExecutionEnv, TxContext};
 use crate::runtime::error::{RuntimeError, RuntimeErrorCode};
 use crate::runtime::value::StackValue;
 use crate::runtime::vm::{VMState, VmRunResult};
@@ -74,49 +74,88 @@ pub fn execute_program(program: &LoadedProgram, env: &ExecutionEnv) -> VmRunResu
 
 pub fn default_bindings_for_program(program: &LoadedProgram) -> HashMap<String, StackValue> {
     let mut bindings: HashMap<String, StackValue> = HashMap::new();
+    let tx_context = TxContext::default();
 
+    let mut placeholders: HashSet<String> = HashSet::new();
     for token in &program.asm {
-        if token.starts_with('<') && token.ends_with('>') {
-            let key = token[1..token.len() - 1].to_string();
-            bindings
-                .entry(key.clone())
-                .or_insert_with(|| StackValue::Symbol(key));
+        if let Some(name) = parse_placeholder(token) {
+            placeholders.insert(name.to_string());
         }
     }
 
-    match bindings.get("preimage") {
-        Some(StackValue::Bytes(_)) => {}
-        _ => {
-            bindings.insert("preimage".to_string(), StackValue::Bytes(b"hello".to_vec()));
+    for name in &placeholders {
+        if name == "preimage" {
+            bindings.insert(name.clone(), StackValue::Bytes(b"hello".to_vec()));
+            continue;
         }
-    }
 
-    let digest = if let Some(preimage) = bindings.get("preimage") {
-        Sha256::digest(preimage.to_bytes()).to_vec()
-    } else {
-        Sha256::digest(b"hello").to_vec()
-    };
-    match bindings.get("hash") {
-        Some(StackValue::Bytes(_)) => {}
-        _ => {
-            bindings.insert("hash".to_string(), StackValue::Bytes(digest));
+        if name == "hash" {
+            let digest = Sha256::digest(b"hello");
+            bindings.insert(name.clone(), StackValue::Bytes(digest.to_vec()));
+            continue;
         }
+
+        if name.ends_with("_txid") {
+            let idx = hash_to_index(name, tx_context.asset_groups.len());
+            bindings.insert(
+                name.clone(),
+                StackValue::Bytes(tx_context.asset_groups[idx].txid.clone()),
+            );
+            continue;
+        }
+
+        if name.ends_with("_gidx") {
+            let idx = hash_to_index(name, tx_context.asset_groups.len());
+            bindings.insert(
+                name.clone(),
+                StackValue::Int(tx_context.asset_groups[idx].gidx as i64),
+            );
+            continue;
+        }
+
+        if is_probable_numeric(name) {
+            bindings.insert(name.clone(), StackValue::Int(0));
+            continue;
+        }
+
+        bindings.insert(name.clone(), StackValue::Symbol(name.clone()));
     }
 
     if !bindings.contains_key("refundTime") {
         bindings.insert("refundTime".to_string(), StackValue::Int(0));
     }
-    if !bindings.contains_key("SERVER_KEY") {
-        bindings.insert(
-            "SERVER_KEY".to_string(),
-            StackValue::Symbol("SERVER_KEY".to_string()),
-        );
+
+    let mut sig_map: HashMap<String, (String, Option<String>)> = HashMap::new();
+    sig_map.extend(scan_checksig_patterns(&program.asm));
+    sig_map.extend(scan_checkmultisig_patterns(&program.asm));
+
+    for (sig, (pk, msg)) in &sig_map {
+        ensure_pubkey_binding(pk, &mut bindings);
+
+        let message = msg
+            .as_ref()
+            .and_then(|m| bindings.get(m).map(stack_value_to_bytes))
+            .unwrap_or_else(|| tx_context.tx_hash.clone());
+
+        let signature = ExecutionEnv::sign_message_for_label(pk, &message);
+        bindings.insert(sig.clone(), StackValue::Bytes(signature));
     }
-    if !bindings.contains_key("serverSig") {
-        bindings.insert(
-            "serverSig".to_string(),
-            StackValue::Symbol("serverSig".to_string()),
-        );
+
+    for name in &placeholders {
+        if is_probable_pubkey(name) {
+            ensure_pubkey_binding(name, &mut bindings);
+        }
+    }
+
+    if let Some(preimage) = bindings.get("preimage") {
+        let digest = Sha256::digest(stack_value_to_bytes(preimage));
+        bindings.insert("hash".to_string(), StackValue::Bytes(digest.to_vec()));
+    }
+
+    for value in bindings.values_mut() {
+        if matches!(value, StackValue::Symbol(_)) {
+            *value = StackValue::Int(0);
+        }
     }
 
     bindings
@@ -140,4 +179,198 @@ fn select_function<'a>(
                 ),
             )
         })
+}
+
+fn parse_placeholder(token: &str) -> Option<&str> {
+    if token.starts_with('<') && token.ends_with('>') {
+        Some(&token[1..token.len() - 1])
+    } else {
+        None
+    }
+}
+
+fn hash_to_index(label: &str, len: usize) -> usize {
+    if len == 0 {
+        return 0;
+    }
+    let digest = Sha256::digest(label.as_bytes());
+    digest[0] as usize % len
+}
+
+fn is_probable_numeric(name: &str) -> bool {
+    let lower = name.to_ascii_lowercase();
+    lower.contains("time")
+        || lower.contains("value")
+        || lower.contains("amount")
+        || lower.contains("count")
+        || lower.contains("index")
+        || lower.contains("group")
+        || lower == "i"
+        || lower == "j"
+        || lower == "k"
+}
+
+fn is_probable_pubkey(name: &str) -> bool {
+    let lower = name.to_ascii_lowercase();
+    name == "SERVER_KEY"
+        || lower.contains("pubkey")
+        || lower.ends_with("key")
+        || lower.ends_with("pk")
+        || lower == "sender"
+        || lower == "receiver"
+        || lower == "owner"
+        || lower == "server"
+}
+
+fn is_signature_label(name: &str) -> bool {
+    let lower = name.to_ascii_lowercase();
+    lower.ends_with("sig") || lower.ends_with("signature")
+}
+
+fn strip_signature_suffix(name: &str) -> String {
+    if name.eq_ignore_ascii_case("serverSig") {
+        return "SERVER_KEY".to_string();
+    }
+
+    if let Some(stripped) = name.strip_suffix("Sig") {
+        return stripped.to_string();
+    }
+    if let Some(stripped) = name.strip_suffix("sig") {
+        return stripped.to_string();
+    }
+    if let Some(stripped) = name.strip_suffix("Signature") {
+        return stripped.to_string();
+    }
+    if let Some(stripped) = name.strip_suffix("signature") {
+        return stripped.to_string();
+    }
+
+    name.to_string()
+}
+
+fn ensure_pubkey_binding(label: &str, bindings: &mut HashMap<String, StackValue>) {
+    if matches!(bindings.get(label), Some(StackValue::Bytes(v)) if v.len() == 33 || v.len() == 65) {
+        return;
+    }
+
+    let (_sk, pk) = ExecutionEnv::derive_keypair_for_label(label);
+    bindings.insert(
+        label.to_string(),
+        StackValue::Bytes(pk.serialize().to_vec()),
+    );
+}
+
+fn scan_checksig_patterns(script: &[String]) -> HashMap<String, (String, Option<String>)> {
+    let mut out: HashMap<String, (String, Option<String>)> = HashMap::new();
+
+    for i in 0..script.len() {
+        let opcode = script[i].as_str();
+        match opcode {
+            "OP_CHECKSIG" | "OP_CHECKSIGVERIFY" => {
+                if i >= 2 {
+                    if let (Some(pk), Some(sig)) = (
+                        parse_placeholder(&script[i - 2]),
+                        parse_placeholder(&script[i - 1]),
+                    ) {
+                        out.insert(sig.to_string(), (pk.to_string(), None));
+                    }
+                }
+            }
+            "OP_CHECKSIGFROMSTACK" | "OP_CHECKSIGFROMSTACKVERIFY" => {
+                if i >= 3 {
+                    if let (Some(msg), Some(pk), Some(sig)) = (
+                        parse_placeholder(&script[i - 3]),
+                        parse_placeholder(&script[i - 2]),
+                        parse_placeholder(&script[i - 1]),
+                    ) {
+                        out.insert(sig.to_string(), (pk.to_string(), Some(msg.to_string())));
+                    }
+                }
+            }
+            "OP_CHECKSIGADD" => {
+                if i >= 3 {
+                    if let (Some(sig), Some(pk)) = (
+                        parse_placeholder(&script[i - 3]),
+                        parse_placeholder(&script[i - 1]),
+                    ) {
+                        out.insert(sig.to_string(), (pk.to_string(), None));
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+
+    out
+}
+
+fn scan_checkmultisig_patterns(script: &[String]) -> HashMap<String, (String, Option<String>)> {
+    let mut out: HashMap<String, (String, Option<String>)> = HashMap::new();
+
+    for i in 0..script.len() {
+        if script[i] != "OP_CHECKMULTISIG" || i < 4 {
+            continue;
+        }
+
+        let mut sig_cursor = i - 1;
+        let mut signatures_rev: Vec<String> = Vec::new();
+        while sig_cursor > 0 {
+            if parse_push_number(&script[sig_cursor]).is_some() {
+                break;
+            }
+            if let Some(sig) = parse_placeholder(&script[sig_cursor]) {
+                signatures_rev.push(sig.to_string());
+            }
+            sig_cursor -= 1;
+        }
+
+        let sig_count = parse_push_number(&script[sig_cursor]).unwrap_or(0);
+        let mut signatures = signatures_rev;
+        signatures.reverse();
+        if sig_count == 0 || signatures.len() < sig_count {
+            continue;
+        }
+        signatures.truncate(sig_count);
+
+        if sig_cursor == 0 {
+            continue;
+        }
+        let mut key_cursor = sig_cursor - 1;
+        let mut pubkeys_rev: Vec<String> = Vec::new();
+        while key_cursor > 0 {
+            if parse_push_number(&script[key_cursor]).is_some() {
+                break;
+            }
+            if let Some(pk) = parse_placeholder(&script[key_cursor]) {
+                pubkeys_rev.push(pk.to_string());
+            }
+            key_cursor -= 1;
+        }
+
+        let key_count = parse_push_number(&script[key_cursor]).unwrap_or(0);
+        let mut pubkeys = pubkeys_rev;
+        pubkeys.reverse();
+        if key_count == 0 || pubkeys.len() < key_count {
+            continue;
+        }
+        pubkeys.truncate(key_count);
+
+        for (sig, pk) in signatures.into_iter().zip(pubkeys.into_iter()) {
+            out.insert(sig, (pk, None));
+        }
+    }
+
+    out
+}
+
+fn parse_push_number(token: &str) -> Option<usize> {
+    if token == "OP_0" {
+        return Some(0);
+    }
+    if let Some(rest) = token.strip_prefix("OP_") {
+        if let Ok(v) = rest.parse::<usize>() {
+            return Some(v);
+        }
+    }
+    token.parse::<usize>().ok()
 }
