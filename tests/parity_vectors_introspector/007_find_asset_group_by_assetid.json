@@ -1,0 +1,19 @@
+{
+  "name": "find_asset_group_by_assetid",
+  "asm": [
+    "<asset_txid>",
+    "<asset_gidx>",
+    "OP_FINDASSETGROUPBYASSETID",
+    "OP_0",
+    "OP_EQUAL"
+  ],
+  "bindings": {
+    "asset_txid": { "type": "tx_group_txid", "index": 0 },
+    "asset_gidx": { "type": "tx_group_gidx", "index": 0 }
+  },
+  "expected": {
+    "kind": "script_true",
+    "top": { "type": "bool", "value": true }
+  }
+}
+

@@ -1,0 +1,9 @@
+{
+  "name": "unknown_opcode_runtime_error",
+  "asm": ["OP_DOES_NOT_EXIST"],
+  "expected": {
+    "kind": "runtime_error",
+    "error_code": "UnknownOpcode"
+  }
+}
+

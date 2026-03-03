@@ -108,3 +108,30 @@ cargo test --test runtime_parity_vectors_test --test runtime_external_parity_aud
 - `runtime_external_parity_audit_test` uses `ARKADE_PARITY_EXTERNAL_CMD` when provided.
 - Otherwise, it falls back to Cargo-provided `CARGO_BIN_EXE_arkade_parity_adapter`.
 - Binding materialization for vectors supports deterministic real signatures and keypairs through label-based generation.
+
+## Introspector-backed external adapter
+
+An additional real external adapter is provided at:
+
+- `tools/introspector_parity_adapter/main.go`
+
+This adapter executes vectors through `github.com/ArkLabsHQ/introspector/pkg/arkade` and emits the same parity output envelope.
+
+Run introspector parity audit (gated):
+
+```bash
+ARKADE_ENABLE_INTROSPECTOR_PARITY=1 \
+cargo test --test runtime_external_introspector_parity_test -- --nocapture
+```
+
+Override adapter command:
+
+```bash
+ARKADE_ENABLE_INTROSPECTOR_PARITY=1 \
+ARKADE_INTROSPECTOR_PARITY_CMD="cd tools/introspector_parity_adapter && go run . --" \
+cargo test --test runtime_external_introspector_parity_test -- --nocapture
+```
+
+Current scope:
+- The introspector bridge uses `tests/parity_vectors_introspector/*.json`.
+- Validation compares `kind` parity (`script_true` / `script_false` / `runtime_error`) between local runtime and introspector engine.

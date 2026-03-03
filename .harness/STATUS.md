@@ -61,14 +61,19 @@ This board maps to the required tags above by execution phase:
   - Added in-repo external adapter binary `src/bin/arkade_parity_adapter.rs`.
   - External bridge now validates full parity contract: outcome class, error code, final stacks, and telemetry snapshots.
   - Bridge auto-resolves in-repo adapter via `CARGO_BIN_EXE_arkade_parity_adapter` when `ARKADE_PARITY_EXTERNAL_CMD` is not set.
+- `[COMPLETED]` R23: Real introspector-backed parity adapter:
+  - Added `tools/introspector_parity_adapter` (Go) executing vectors through `github.com/ArkLabsHQ/introspector/pkg/arkade`.
+  - Added dedicated compatibility corpus `tests/parity_vectors_introspector/*.json`.
+  - Added gated kind-parity bridge `tests/runtime_external_introspector_parity_test.rs` (`ARKADE_ENABLE_INTROSPECTOR_PARITY=1`).
 
 ## Active Focus
 Current target: closed.
-Next transition: cross-runtime adapter integration against real `arkd`/`introspector` executable for non-self parity.
+Next transition: expand introspector compatibility vectors and close remaining opcode semantic gaps detected by external parity deltas.
 
 ## Open Risks
 - Introspection and streaming-hash semantics are implemented concretely for in-process runtime context, but still need parity coverage against real `arkd`/`introspector` adapter outputs (current fallback adapter uses this repo runtime implementation in a separate process).
 - Parity vectors currently cover targeted behavior classes; additional edge vectors are still needed for exhaustive opcode path coverage.
+- Introspector parity suite is intentionally scoped to compatibility vectors; full-corpus parity still contains known semantic deltas (e.g. taproot-context checksig family and certain asset lookup semantics).
 
 ## Validation Log
 - `[COMPLETED]` `cargo fmt --check` passed.
@@ -80,3 +85,4 @@ Next transition: cross-runtime adapter integration against real `arkd`/`introspe
 - `[COMPLETED]` full `cargo test` passed after ABI-aware binding inference addition.
 - `[COMPLETED]` `cargo test --test runtime_parity_vectors_test --test runtime_external_parity_audit_test` passed.
 - `[COMPLETED]` `cargo test --test runtime_external_parity_audit_test` passed with in-repo external adapter path fallback.
+- `[COMPLETED]` `ARKADE_ENABLE_INTROSPECTOR_PARITY=1 cargo test --test runtime_external_introspector_parity_test` passed.

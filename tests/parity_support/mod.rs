@@ -63,7 +63,11 @@ pub enum ValueSpec {
 }
 
 pub fn load_vectors() -> Vec<ParityVector> {
-    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/parity_vectors");
+    load_vectors_from_rel_dir("tests/parity_vectors")
+}
+
+pub fn load_vectors_from_rel_dir(rel_dir: &str) -> Vec<ParityVector> {
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(rel_dir);
     let mut entries = fs::read_dir(&root)
         .unwrap_or_else(|err| panic!("failed reading parity vector dir {}: {err}", root.display()))
         .map(|entry| entry.expect("failed reading parity vector entry").path())

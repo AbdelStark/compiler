@@ -1,0 +1,10 @@
+{
+  "name": "missing_binding_runtime_error",
+  "strict_placeholders": true,
+  "asm": ["<missing>"],
+  "expected": {
+    "kind": "runtime_error",
+    "error_code": "MissingBinding"
+  }
+}
+
