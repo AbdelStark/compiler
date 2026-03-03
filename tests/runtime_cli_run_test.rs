@@ -18,6 +18,23 @@ fn cli_run_succeeds_for_htlc_claim_exit_variant() {
 }
 
 #[test]
+fn cli_run_succeeds_for_htlc_ark_source_claim_exit_variant() {
+    let output = Command::new(env!("CARGO_BIN_EXE_arkadec"))
+        .arg("run")
+        .arg("examples/htlc.ark")
+        .arg("--function")
+        .arg("claim")
+        .arg("--variant")
+        .arg("false")
+        .output()
+        .expect("failed to run cli");
+
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("RESULT: true"), "stdout was: {stdout}");
+}
+
+#[test]
 fn cli_run_missing_file_returns_exit_2() {
     let output = Command::new(env!("CARGO_BIN_EXE_arkadec"))
         .arg("run")
