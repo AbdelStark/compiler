@@ -256,7 +256,7 @@ fn run_command(args: RunCommandArgs) -> Result<i32> {
 
     match args.output.as_str() {
         "text" => emit_text_output(&program, &result),
-        "json" => emit_json_output(&result)?,
+        "json" => emit_json_output(&result, &env.tx_context)?,
         other => anyhow::bail!("invalid --output value '{other}', expected 'text' or 'json'"),
     }
 
@@ -279,6 +279,12 @@ struct RunResultPayload {
     outcome: String,
     error_code: Option<String>,
     error_message: Option<String>,
+    tx_context: RunTxContextPayload,
+}
+
+#[derive(serde::Serialize)]
+struct RunTxContextPayload {
+    tx_hash: String,
 }
 
 fn resolve_tx_context(
@@ -321,7 +327,10 @@ fn emit_text_output(program: &runtime::LoadedProgram, result: &runtime::vm::VmRu
     }
 }
 
-fn emit_json_output(result: &runtime::vm::VmRunResult) -> Result<()> {
+fn emit_json_output(
+    result: &runtime::vm::VmRunResult,
+    tx_context: &runtime::env::TxContext,
+) -> Result<()> {
     let (status, outcome, error_code, error_message) = match &result.outcome {
         runtime::vm::VmOutcome::ScriptTrue => {
             ("true".to_string(), "script_true".to_string(), None, None)
@@ -344,6 +353,9 @@ fn emit_json_output(result: &runtime::vm::VmRunResult) -> Result<()> {
             outcome,
             error_code,
             error_message,
+            tx_context: RunTxContextPayload {
+                tx_hash: hex::encode(&tx_context.tx_hash),
+            },
         },
     };
 

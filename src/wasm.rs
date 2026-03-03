@@ -85,6 +85,7 @@ struct RuntimeExecutionWire {
     contract_name: String,
     function_name: String,
     server_variant: bool,
+    tx_context: RuntimeTxContextWire,
     outcome: String,
     error_code: Option<String>,
     error_message: Option<String>,
@@ -93,10 +94,16 @@ struct RuntimeExecutionWire {
     telemetry: Vec<RuntimeStepWire>,
 }
 
+#[derive(Debug, Serialize)]
+struct RuntimeTxContextWire {
+    tx_hash: String,
+}
+
 impl RuntimeExecutionWire {
     fn from_run(
         program: &crate::runtime::LoadedProgram,
         run: &crate::runtime::vm::VmRunResult,
+        tx_hash_hex: String,
     ) -> Self {
         let (outcome, error_code, error_message) = match &run.outcome {
             crate::runtime::vm::VmOutcome::ScriptTrue => ("script_true".to_string(), None, None),
@@ -133,6 +140,9 @@ impl RuntimeExecutionWire {
             contract_name: program.contract_name.clone(),
             function_name: program.function_name.clone(),
             server_variant: program.server_variant,
+            tx_context: RuntimeTxContextWire {
+                tx_hash: tx_hash_hex,
+            },
             outcome,
             error_code,
             error_message,
@@ -188,21 +198,21 @@ fn decode_bindings_json(
         .collect::<Result<HashMap<_, _>, _>>()
 }
 
-fn execute_contract_json_impl(
-    contract_json: &str,
+fn execute_contract_impl(
+    contract: &crate::models::ContractJson,
     function_name: &str,
     server_variant: bool,
     bindings_json: &str,
     strict_placeholders: bool,
     context_json: &str,
+    context_strict: bool,
 ) -> Result<String, String> {
-    let contract: crate::models::ContractJson = serde_json::from_str(contract_json)
-        .map_err(|err| format!("invalid contract artifact json: {err}"))?;
     let program =
-        crate::runtime::load_program_from_contract(&contract, function_name, server_variant)
+        crate::runtime::load_program_from_contract(contract, function_name, server_variant)
             .map_err(|err| err.to_string())?;
-    let tx_context = crate::runtime::context_fixture::parse_context_json(context_json, false)
-        .map_err(|err| format!("invalid runtime context json payload: {err}"))?;
+    let tx_context =
+        crate::runtime::context_fixture::parse_context_json(context_json, context_strict)
+            .map_err(|err| format!("invalid runtime context json payload: {err}"))?;
 
     let mut env = crate::runtime::env::ExecutionEnv {
         strict_placeholders,
@@ -212,8 +222,31 @@ fn execute_contract_json_impl(
     env.bindings.extend(decode_bindings_json(bindings_json)?);
 
     let run = crate::runtime::execute_program(&program, &env);
-    let output = RuntimeExecutionWire::from_run(&program, &run);
+    let output =
+        RuntimeExecutionWire::from_run(&program, &run, hex::encode(&env.tx_context.tx_hash));
     serde_json::to_string_pretty(&output).map_err(|err| format!("Serialization error: {err}"))
+}
+
+fn execute_contract_json_impl(
+    contract_json: &str,
+    function_name: &str,
+    server_variant: bool,
+    bindings_json: &str,
+    strict_placeholders: bool,
+    context_json: &str,
+    context_strict: bool,
+) -> Result<String, String> {
+    let contract: crate::models::ContractJson = serde_json::from_str(contract_json)
+        .map_err(|err| format!("invalid contract artifact json: {err}"))?;
+    execute_contract_impl(
+        &contract,
+        function_name,
+        server_variant,
+        bindings_json,
+        strict_placeholders,
+        context_json,
+        context_strict,
+    )
 }
 
 /// Execute one function path from a compiled contract JSON artifact.
@@ -222,13 +255,22 @@ fn execute_contract_json_impl(
 /// - `server_variant`: `false`
 /// - `bindings_json`: `""`
 /// - `strict_placeholders`: `false`
+/// - `context_strict`: `false`
 #[wasm_bindgen]
 pub fn execute_contract_json(
     contract_json: &str,
     function_name: &str,
     context_json: &str,
 ) -> Result<String, String> {
-    execute_contract_json_impl(contract_json, function_name, false, "", false, context_json)
+    execute_contract_json_impl(
+        contract_json,
+        function_name,
+        false,
+        "",
+        false,
+        context_json,
+        false,
+    )
 }
 
 /// Execute one function path from a compiled contract JSON artifact.
@@ -243,6 +285,7 @@ pub fn execute_contract_json_with_options(
     bindings_json: &str,
     strict_placeholders: bool,
     context_json: &str,
+    context_strict: Option<bool>,
 ) -> Result<String, String> {
     execute_contract_json_impl(
         contract_json,
@@ -251,6 +294,7 @@ pub fn execute_contract_json_with_options(
         bindings_json,
         strict_placeholders,
         context_json,
+        context_strict.unwrap_or(false),
     )
 }
 
@@ -261,17 +305,17 @@ fn execute_source_impl(
     bindings_json: &str,
     strict_placeholders: bool,
     context_json: &str,
+    context_strict: bool,
 ) -> Result<String, String> {
     let contract = crate::compiler::compile(source)?;
-    let contract_json =
-        serde_json::to_string(&contract).map_err(|err| format!("Serialization error: {err}"))?;
-    execute_contract_json_impl(
-        &contract_json,
+    execute_contract_impl(
+        &contract,
         function_name,
         server_variant,
         bindings_json,
         strict_placeholders,
         context_json,
+        context_strict,
     )
 }
 
@@ -281,13 +325,14 @@ fn execute_source_impl(
 /// - `server_variant`: `false`
 /// - `bindings_json`: `""`
 /// - `strict_placeholders`: `false`
+/// - `context_strict`: `false`
 #[wasm_bindgen]
 pub fn execute_source(
     source: &str,
     function_name: &str,
     context_json: &str,
 ) -> Result<String, String> {
-    execute_source_impl(source, function_name, false, "", false, context_json)
+    execute_source_impl(source, function_name, false, "", false, context_json, false)
 }
 
 /// Compile Ark source and execute one function path with explicit options.
@@ -299,6 +344,7 @@ pub fn execute_source_with_options(
     bindings_json: &str,
     strict_placeholders: bool,
     context_json: &str,
+    context_strict: Option<bool>,
 ) -> Result<String, String> {
     execute_source_impl(
         source,
@@ -307,5 +353,6 @@ pub fn execute_source_with_options(
         bindings_json,
         strict_placeholders,
         context_json,
+        context_strict.unwrap_or(false),
     )
 }
