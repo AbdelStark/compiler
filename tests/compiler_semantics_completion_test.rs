@@ -24,9 +24,10 @@ fn scenario_1_var_assign_updates_active_stack_value() {
 
     let result = runtime::execute_program(&program, &env);
     assert_eq!(result.outcome, VmOutcome::ScriptTrue);
-    assert!(
-        result.final_main_stack.contains(&StackValue::Int(10)),
-        "expected reassigned value to be on stack, got {:?}",
+    assert_eq!(
+        result.final_main_stack.last(),
+        Some(&StackValue::Int(10)),
+        "expected top-of-stack to reflect reassigned value, got {:?}",
         result.final_main_stack
     );
 }

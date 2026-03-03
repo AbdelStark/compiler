@@ -998,7 +998,10 @@ fn generate_expression_asm(expr: &Expression, asm: &mut Vec<String>) {
             }
         }
         Expression::ArrayIndex { array, index } => {
-            emit_array_index_access_asm(array, index, asm);
+            if let Err(err) = emit_array_index_access_asm(array, index, asm) {
+                // Defensive fallback: validation should reject unsupported shapes earlier.
+                eprintln!("{err}");
+            }
         }
         Expression::ArrayLength(_) => {
             // TODO: Implement array length in Commit 6
@@ -1277,16 +1280,21 @@ fn generate_comparison_asm(left: &Expression, op: &str, right: &Expression, asm:
     }
 }
 
-fn emit_array_index_access_asm(array: &Expression, index: &Expression, asm: &mut Vec<String>) {
+fn emit_array_index_access_asm(
+    array: &Expression,
+    index: &Expression,
+    asm: &mut Vec<String>,
+) -> Result<(), String> {
     match (array, index) {
         (Expression::Variable(array_name), Expression::Literal(index_value))
         | (Expression::Variable(array_name), Expression::Variable(index_value)) => {
             asm.push(format!("<{}_{}>", array_name, index_value));
+            Ok(())
         }
-        _ => panic!(
+        _ => Err(format!(
             "unsupported array index expression during codegen: {:?}[{:?}]",
             array, index
-        ),
+        )),
     }
 }
 
@@ -1510,7 +1518,10 @@ fn emit_expression_asm(expr: &Expression, asm: &mut Vec<String>) {
             }
         }
         Expression::ArrayIndex { array, index } => {
-            emit_array_index_access_asm(array, index, asm);
+            if let Err(err) = emit_array_index_access_asm(array, index, asm) {
+                // Defensive fallback: validation should reject unsupported shapes earlier.
+                eprintln!("{err}");
+            }
         }
         Expression::ArrayLength(_) => {
             // TODO: Implement array length in Commit 6
@@ -2230,5 +2241,38 @@ fn substitute_expression(
         },
         // All other expressions are returned as-is
         _ => expr.clone(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn array_index_codegen_helper_returns_error_for_unsupported_expressions() {
+        let array = Expression::BinaryOp {
+            left: Box::new(Expression::Literal("1".to_string())),
+            op: "+".to_string(),
+            right: Box::new(Expression::Literal("2".to_string())),
+        };
+        let index = Expression::Literal("0".to_string());
+        let mut asm = Vec::new();
+
+        let panic_result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            emit_array_index_access_asm(&array, &index, &mut asm)
+        }));
+        assert!(
+            panic_result.is_ok(),
+            "unsupported array index shapes should return an error, not panic"
+        );
+
+        let emission_result =
+            panic_result.expect("codegen helper should not panic for unsupported array indexes");
+        let error_message =
+            emission_result.expect_err("unsupported array index expressions must return Err");
+        assert!(
+            error_message.contains("unsupported array index expression"),
+            "expected precise unsupported-array-index error, got: {error_message}"
+        );
     }
 }
