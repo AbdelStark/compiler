@@ -52,6 +52,18 @@ fn run_with_context_file_cli_run_uses_fixture_tx_context_from_file() {
     let with_context_stdout = String::from_utf8_lossy(&with_context.stdout);
     let with_context_json: serde_json::Value =
         serde_json::from_str(&with_context_stdout).expect("stdout should be valid json");
+    assert!(
+        with_context_json.get("status").is_some(),
+        "missing status key"
+    );
+    assert!(
+        with_context_json.get("result").is_some(),
+        "missing result key"
+    );
+    assert!(
+        with_context_json.get("schema_version").is_some(),
+        "missing schema_version key"
+    );
     let tx_hash = with_context_json["result"]["tx_context"]["tx_hash"]
         .as_str()
         .expect("tx_hash should be a string");
@@ -91,4 +103,58 @@ fn run_without_context_falls_back_cli_run_without_flags_uses_synthetic_fallback(
     assert_eq!(output.status.code(), Some(0));
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(stdout.contains("RESULT: true"), "stdout was: {stdout}");
+}
+
+#[test]
+fn context_strict_rejects_unknown_fields_cli_run_reports_rogue_field() {
+    let temp = tempfile::tempdir().expect("tempdir should be created");
+    let contract_path = temp.path().join("contract.json");
+    let fixture_path = temp.path().join("fixture.json");
+
+    fs::write(
+        &contract_path,
+        r#"{
+  "contractName": "txhash_fixture_check",
+  "constructorInputs": [],
+  "functions": [
+    {
+      "name": "claim",
+      "functionInputs": [],
+      "serverVariant": false,
+      "require": [],
+      "asm": ["OP_1"]
+    }
+  ]
+}"#,
+    )
+    .expect("contract fixture should be written");
+
+    fs::write(
+        &fixture_path,
+        r#"{
+  "tx_context": {
+    "txid": "0xabcd1234",
+    "rogue_field": 42
+  }
+}"#,
+    )
+    .expect("context fixture should be written");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_arkadec"))
+        .arg("run")
+        .arg(&contract_path)
+        .arg("--function")
+        .arg("claim")
+        .arg("--context-file")
+        .arg(&fixture_path)
+        .arg("--context-strict")
+        .output()
+        .expect("failed to run cli with strict context fixture");
+
+    assert_ne!(output.status.code(), Some(0));
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("rogue_field"),
+        "stderr should mention rogue_field, got: {stderr}"
+    );
 }
