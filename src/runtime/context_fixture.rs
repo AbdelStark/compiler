@@ -1,4 +1,5 @@
 use serde::Deserialize;
+use serde_json::{Map, Value};
 
 use crate::runtime::env::{AssetEntry, AssetGroup, TxContext, TxInput, TxOutput};
 
@@ -95,176 +96,145 @@ pub struct ContextFixture {
     pub tx_context: TxContextWire,
 }
 
-#[derive(Debug, Clone, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct AssetEntryWireStrict {
-    #[serde(default)]
-    txid: String,
-    #[serde(default)]
-    gidx: u16,
-    #[serde(default)]
-    amount: i64,
-    #[serde(default)]
-    data: String,
-    #[serde(default)]
-    control: String,
-    #[serde(default)]
-    metadata_hash: String,
-    #[serde(default)]
-    asset_id: String,
-}
+const BITCOIN_TX_VERSION_V2: i64 = 2;
 
-#[derive(Debug, Clone, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct TxInputWireStrict {
-    #[serde(default)]
-    value: i64,
-    #[serde(default)]
-    script_pubkey: String,
-    #[serde(default)]
-    sequence: i64,
-    #[serde(default)]
-    outpoint: String,
-    #[serde(default)]
-    issuance: String,
-    #[serde(default)]
-    assets: Vec<AssetEntryWireStrict>,
-}
-
-#[derive(Debug, Clone, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct TxOutputWireStrict {
-    #[serde(default)]
-    value: i64,
-    #[serde(default)]
-    script_pubkey: String,
-    #[serde(default)]
-    nonce: String,
-    #[serde(default)]
-    assets: Vec<AssetEntryWireStrict>,
-}
-
-#[derive(Debug, Clone, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct AssetGroupWireStrict {
-    #[serde(default)]
-    txid: String,
-    #[serde(default)]
-    gidx: u16,
-    #[serde(default)]
-    sum_inputs: i64,
-    #[serde(default)]
-    sum_outputs: i64,
-    #[serde(default)]
-    num_inputs: i64,
-    #[serde(default)]
-    num_outputs: i64,
-    #[serde(default)]
-    control: String,
-    #[serde(default)]
-    metadata_hash: String,
-    #[serde(default)]
-    asset_id: String,
-}
-
-#[derive(Debug, Clone, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct TxContextWireStrict {
-    #[serde(default)]
-    txid: String,
-    #[serde(default = "default_version")]
-    version: i64,
-    #[serde(default)]
-    locktime: i64,
-    #[serde(default)]
-    weight: i64,
-    #[serde(default)]
-    current_input_index: usize,
-    #[serde(default)]
-    inputs: Vec<TxInputWireStrict>,
-    #[serde(default)]
-    outputs: Vec<TxOutputWireStrict>,
-    #[serde(default)]
-    asset_groups: Vec<AssetGroupWireStrict>,
-}
-
-#[derive(Debug, Clone, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct ContextFixtureStrict {
-    tx_context: TxContextWireStrict,
-}
+const ROOT_FIELDS: [&str; 1] = ["tx_context"];
+const TX_CONTEXT_FIELDS: [&str; 8] = [
+    "txid",
+    "version",
+    "locktime",
+    "weight",
+    "current_input_index",
+    "inputs",
+    "outputs",
+    "asset_groups",
+];
+const TX_INPUT_FIELDS: [&str; 6] = [
+    "value",
+    "script_pubkey",
+    "sequence",
+    "outpoint",
+    "issuance",
+    "assets",
+];
+const TX_OUTPUT_FIELDS: [&str; 4] = ["value", "script_pubkey", "nonce", "assets"];
+const ASSET_GROUP_FIELDS: [&str; 9] = [
+    "txid",
+    "gidx",
+    "sum_inputs",
+    "sum_outputs",
+    "num_inputs",
+    "num_outputs",
+    "control",
+    "metadata_hash",
+    "asset_id",
+];
+const ASSET_ENTRY_FIELDS: [&str; 7] = [
+    "txid",
+    "gidx",
+    "amount",
+    "data",
+    "control",
+    "metadata_hash",
+    "asset_id",
+];
 
 fn default_version() -> i64 {
-    2
+    BITCOIN_TX_VERSION_V2
 }
 
-impl From<AssetEntryWireStrict> for AssetEntryWire {
-    fn from(value: AssetEntryWireStrict) -> Self {
-        Self {
-            txid: value.txid,
-            gidx: value.gidx,
-            amount: value.amount,
-            data: value.data,
-            control: value.control,
-            metadata_hash: value.metadata_hash,
-            asset_id: value.asset_id,
-        }
-    }
+fn object<'a>(value: &'a Value, path: &str) -> Result<&'a Map<String, Value>, String> {
+    value
+        .as_object()
+        .ok_or_else(|| format!("invalid context fixture json: expected object at {path}"))
 }
 
-impl From<TxInputWireStrict> for TxInputWire {
-    fn from(value: TxInputWireStrict) -> Self {
-        Self {
-            value: value.value,
-            script_pubkey: value.script_pubkey,
-            sequence: value.sequence,
-            outpoint: value.outpoint,
-            issuance: value.issuance,
-            assets: value.assets.into_iter().map(Into::into).collect(),
-        }
-    }
+fn array<'a>(value: &'a Value, path: &str) -> Result<&'a Vec<Value>, String> {
+    value
+        .as_array()
+        .ok_or_else(|| format!("invalid context fixture json: expected array at {path}"))
 }
 
-impl From<TxOutputWireStrict> for TxOutputWire {
-    fn from(value: TxOutputWireStrict) -> Self {
-        Self {
-            value: value.value,
-            script_pubkey: value.script_pubkey,
-            nonce: value.nonce,
-            assets: value.assets.into_iter().map(Into::into).collect(),
+fn validate_allowed_fields(
+    map: &Map<String, Value>,
+    allowed_fields: &[&str],
+    path: &str,
+) -> Result<(), String> {
+    for key in map.keys() {
+        if !allowed_fields.contains(&key.as_str()) {
+            return Err(format!(
+                "invalid context fixture json: unknown field '{key}' at {path}"
+            ));
         }
     }
+    Ok(())
 }
 
-impl From<AssetGroupWireStrict> for AssetGroupWire {
-    fn from(value: AssetGroupWireStrict) -> Self {
-        Self {
-            txid: value.txid,
-            gidx: value.gidx,
-            sum_inputs: value.sum_inputs,
-            sum_outputs: value.sum_outputs,
-            num_inputs: value.num_inputs,
-            num_outputs: value.num_outputs,
-            control: value.control,
-            metadata_hash: value.metadata_hash,
-            asset_id: value.asset_id,
-        }
-    }
+fn validate_asset_entry(value: &Value, path: &str) -> Result<(), String> {
+    let map = object(value, path)?;
+    validate_allowed_fields(map, &ASSET_ENTRY_FIELDS, path)
 }
 
-impl From<TxContextWireStrict> for TxContextWire {
-    fn from(value: TxContextWireStrict) -> Self {
-        Self {
-            txid: value.txid,
-            version: value.version,
-            locktime: value.locktime,
-            weight: value.weight,
-            current_input_index: value.current_input_index,
-            inputs: value.inputs.into_iter().map(Into::into).collect(),
-            outputs: value.outputs.into_iter().map(Into::into).collect(),
-            asset_groups: value.asset_groups.into_iter().map(Into::into).collect(),
+fn validate_assets(value: &Value, path: &str) -> Result<(), String> {
+    for (idx, entry) in array(value, path)?.iter().enumerate() {
+        validate_asset_entry(entry, &format!("{path}[{idx}]"))?;
+    }
+    Ok(())
+}
+
+fn validate_tx_input(value: &Value, path: &str) -> Result<(), String> {
+    let map = object(value, path)?;
+    validate_allowed_fields(map, &TX_INPUT_FIELDS, path)?;
+    if let Some(assets) = map.get("assets") {
+        validate_assets(assets, &format!("{path}.assets"))?;
+    }
+    Ok(())
+}
+
+fn validate_tx_output(value: &Value, path: &str) -> Result<(), String> {
+    let map = object(value, path)?;
+    validate_allowed_fields(map, &TX_OUTPUT_FIELDS, path)?;
+    if let Some(assets) = map.get("assets") {
+        validate_assets(assets, &format!("{path}.assets"))?;
+    }
+    Ok(())
+}
+
+fn validate_asset_group(value: &Value, path: &str) -> Result<(), String> {
+    let map = object(value, path)?;
+    validate_allowed_fields(map, &ASSET_GROUP_FIELDS, path)
+}
+
+fn validate_context_fixture(value: &Value) -> Result<(), String> {
+    let root = object(value, "$")?;
+    validate_allowed_fields(root, &ROOT_FIELDS, "$")?;
+
+    let tx_context = root
+        .get("tx_context")
+        .ok_or_else(|| "invalid context fixture json: missing field `tx_context`".to_string())?;
+    let tx_context_map = object(tx_context, "$.tx_context")?;
+    validate_allowed_fields(tx_context_map, &TX_CONTEXT_FIELDS, "$.tx_context")?;
+
+    if let Some(inputs) = tx_context_map.get("inputs") {
+        for (idx, input) in array(inputs, "$.tx_context.inputs")?.iter().enumerate() {
+            validate_tx_input(input, &format!("$.tx_context.inputs[{idx}]"))?;
         }
     }
+    if let Some(outputs) = tx_context_map.get("outputs") {
+        for (idx, output) in array(outputs, "$.tx_context.outputs")?.iter().enumerate() {
+            validate_tx_output(output, &format!("$.tx_context.outputs[{idx}]"))?;
+        }
+    }
+    if let Some(groups) = tx_context_map.get("asset_groups") {
+        for (idx, group) in array(groups, "$.tx_context.asset_groups")?
+            .iter()
+            .enumerate()
+        {
+            validate_asset_group(group, &format!("$.tx_context.asset_groups[{idx}]"))?;
+        }
+    }
+
+    Ok(())
 }
 
 fn decode_hex_field(field: &str, raw: &str) -> Result<Vec<u8>, String> {
@@ -387,12 +357,12 @@ pub fn parse_context_json(json: &str, strict: bool) -> Result<TxContext, String>
     }
 
     if strict {
-        let fixture: ContextFixtureStrict = serde_json::from_str(trimmed)
+        let raw: Value = serde_json::from_str(trimmed)
             .map_err(|err| format!("invalid context fixture json: {err}"))?;
-        return ContextFixture {
-            tx_context: fixture.tx_context.into(),
-        }
-        .into_tx_context();
+        validate_context_fixture(&raw)?;
+        let fixture: ContextFixture = serde_json::from_value(raw)
+            .map_err(|err| format!("invalid context fixture json: {err}"))?;
+        return fixture.into_tx_context();
     }
 
     if let Ok(fixture) = serde_json::from_str::<ContextFixture>(trimmed) {
