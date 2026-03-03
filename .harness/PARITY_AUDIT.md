@@ -8,7 +8,12 @@ Run identical script vectors through:
 - Arkade in-process runtime (this repository)
 - External interpreter adapter command
 
-Then compare outcome class (`script_true`, `script_false`, `runtime_error`) for each vector.
+Then compare:
+- outcome class (`script_true`, `script_false`, `runtime_error`)
+- runtime error code (when outcome is `runtime_error`)
+- final main stack
+- final alt stack
+- telemetry trace (`ip`, `token`, `status`, and stack snapshots)
 
 ## Vector Source
 
@@ -31,26 +36,30 @@ The command must print JSON to `stdout` with schema:
 
 ```json
 {
-  "kind": "script_true"
+  "kind": "script_true",
+  "error_code": null,
+  "final_main_stack": [
+    { "type": "int", "value": 1 }
+  ],
+  "final_alt_stack": [],
+  "telemetry": [
+    {
+      "ip": 0,
+      "token": "OP_1",
+      "status": "continue",
+      "stack_before": [],
+      "stack_after": [{ "type": "int", "value": 1 }]
+    }
+  ]
 }
 ```
 
-or
+`kind` may be:
+- `script_true`
+- `script_false`
+- `runtime_error`
 
-```json
-{
-  "kind": "script_false"
-}
-```
-
-or
-
-```json
-{
-  "kind": "runtime_error",
-  "error_code": "OptionalExternalCode"
-}
-```
+When `kind` is `runtime_error`, `error_code` should be set to the external runtime code string.
 
 Input JSON schema passed to adapter:
 
@@ -82,6 +91,12 @@ Run bridge parity against external adapter:
 ARKADE_PARITY_EXTERNAL_CMD="/path/to/adapter" cargo test --test runtime_external_parity_audit_test -- --nocapture
 ```
 
+Run bridge parity against in-repo adapter binary:
+
+```bash
+cargo test --test runtime_external_parity_audit_test
+```
+
 Run both:
 
 ```bash
@@ -90,5 +105,6 @@ cargo test --test runtime_parity_vectors_test --test runtime_external_parity_aud
 
 ## Notes
 
-- `runtime_external_parity_audit_test` no-ops (passes without execution) when `ARKADE_PARITY_EXTERNAL_CMD` is not set.
+- `runtime_external_parity_audit_test` uses `ARKADE_PARITY_EXTERNAL_CMD` when provided.
+- Otherwise, it falls back to Cargo-provided `CARGO_BIN_EXE_arkade_parity_adapter`.
 - Binding materialization for vectors supports deterministic real signatures and keypairs through label-based generation.

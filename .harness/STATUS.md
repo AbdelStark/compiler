@@ -57,14 +57,18 @@ This board maps to the required tags above by execution phase:
   - Added local parity verifier test `tests/runtime_parity_vectors_test.rs`.
   - Added external bridge test `tests/runtime_external_parity_audit_test.rs` via `ARKADE_PARITY_EXTERNAL_CMD`.
   - Added protocol documentation `.harness/PARITY_AUDIT.md`.
+- `[COMPLETED]` R22: External adapter + deep parity equivalence:
+  - Added in-repo external adapter binary `src/bin/arkade_parity_adapter.rs`.
+  - External bridge now validates full parity contract: outcome class, error code, final stacks, and telemetry snapshots.
+  - Bridge auto-resolves in-repo adapter via `CARGO_BIN_EXE_arkade_parity_adapter` when `ARKADE_PARITY_EXTERNAL_CMD` is not set.
 
 ## Active Focus
 Current target: closed.
-Next transition: runtime phase-2 parity-hardening and debugger breakpoint milestone complete; proceed to final semantic parity audit vs external interpreter.
+Next transition: cross-runtime adapter integration against real `arkd`/`introspector` executable for non-self parity.
 
 ## Open Risks
-- Introspection and streaming-hash semantics are implemented concretely for in-process runtime context, but not yet parity-audited against external `arkd`/`introspector` edge behavior for every corner case.
-- Debugger currently supports step/continue/reset and panes; breakpoints and richer inspection tooling are pending.
+- Introspection and streaming-hash semantics are implemented concretely for in-process runtime context, but still need parity coverage against real `arkd`/`introspector` adapter outputs (current fallback adapter uses this repo runtime implementation in a separate process).
+- Parity vectors currently cover targeted behavior classes; additional edge vectors are still needed for exhaustive opcode path coverage.
 
 ## Validation Log
 - `[COMPLETED]` `cargo fmt --check` passed.
@@ -75,3 +79,4 @@ Next transition: runtime phase-2 parity-hardening and debugger breakpoint milest
 - `[COMPLETED]` full `cargo test` passed after breakpoint/debugger and parity-hardening additions.
 - `[COMPLETED]` full `cargo test` passed after ABI-aware binding inference addition.
 - `[COMPLETED]` `cargo test --test runtime_parity_vectors_test --test runtime_external_parity_audit_test` passed.
+- `[COMPLETED]` `cargo test --test runtime_external_parity_audit_test` passed with in-repo external adapter path fallback.
