@@ -1,7 +1,7 @@
-//! WASM bindings for the Arkade Compiler
+//! Runtime execution API with optional WASM bindings for the Arkade Compiler.
 //!
-//! This module provides WebAssembly bindings for the compiler,
-//! allowing it to be used in web browsers.
+//! This module provides native Rust helpers for compile/validate/execute flows
+//! and exposes the same entry points to JavaScript when built with the `wasm` feature.
 
 use std::collections::HashMap;
 
