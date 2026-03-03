@@ -1,0 +1,13 @@
+{
+  "name": "checksigfromstack_verify_success",
+  "asm": ["<msg>", "<pubkey>", "<sig>", "OP_CHECKSIGFROMSTACKVERIFY", "OP_1"],
+  "bindings": {
+    "msg": { "type": "bytes_utf8", "value": "parity-message" },
+    "pubkey": { "type": "pubkey_label", "label": "carol" },
+    "sig": { "type": "signature_label", "label": "carol", "message_key": "msg" }
+  },
+  "expected": {
+    "kind": "script_true",
+    "top": { "type": "int", "value": 1 }
+  }
+}

@@ -1,0 +1,8 @@
+{
+  "name": "introspection_txhash_equal",
+  "asm": ["OP_TXHASH", "OP_DUP", "OP_TXHASH", "OP_EQUAL"],
+  "expected": {
+    "kind": "script_true",
+    "top": { "type": "bool", "value": true }
+  }
+}

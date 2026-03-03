@@ -1,0 +1,7 @@
+{
+  "name": "verify_false_script_failure",
+  "asm": ["OP_0", "OP_VERIFY"],
+  "expected": {
+    "kind": "script_false"
+  }
+}

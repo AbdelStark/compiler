@@ -52,6 +52,11 @@ This board maps to the required tags above by execution phase:
   - `LoadedProgram` now carries parameter type metadata from artifact ABI.
   - Runtime default bindings use ABI types (`pubkey`, `signature`, `bytes*`, `int`, `bool`) before heuristics.
   - validation in `tests/runtime_binding_inference_test.rs`.
+- `[COMPLETED]` R21: External semantic parity audit harness:
+  - Added executable parity vector corpus in `tests/parity_vectors/*.json`.
+  - Added local parity verifier test `tests/runtime_parity_vectors_test.rs`.
+  - Added external bridge test `tests/runtime_external_parity_audit_test.rs` via `ARKADE_PARITY_EXTERNAL_CMD`.
+  - Added protocol documentation `.harness/PARITY_AUDIT.md`.
 
 ## Active Focus
 Current target: closed.
@@ -69,3 +74,4 @@ Next transition: runtime phase-2 parity-hardening and debugger breakpoint milest
 - `[COMPLETED]` `cargo test --test runtime_opcode_surface_test --test runtime_determinism_test --test runtime_failure_classification_test --test runtime_cli_debug_boot_test` passed.
 - `[COMPLETED]` full `cargo test` passed after breakpoint/debugger and parity-hardening additions.
 - `[COMPLETED]` full `cargo test` passed after ABI-aware binding inference addition.
+- `[COMPLETED]` `cargo test --test runtime_parity_vectors_test --test runtime_external_parity_audit_test` passed.

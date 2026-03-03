@@ -1,0 +1,12 @@
+{
+  "name": "checksig_verify_success",
+  "asm": ["<pubkey>", "<sig>", "OP_CHECKSIGVERIFY", "OP_1"],
+  "bindings": {
+    "pubkey": { "type": "pubkey_label", "label": "alice" },
+    "sig": { "type": "signature_label", "label": "alice" }
+  },
+  "expected": {
+    "kind": "script_true",
+    "top": { "type": "int", "value": 1 }
+  }
+}

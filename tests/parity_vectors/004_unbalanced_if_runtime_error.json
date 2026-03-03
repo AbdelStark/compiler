@@ -1,0 +1,8 @@
+{
+  "name": "unbalanced_if_runtime_error",
+  "asm": ["OP_0", "OP_IF"],
+  "expected": {
+    "kind": "runtime_error",
+    "error_code": "UnbalancedConditional"
+  }
+}

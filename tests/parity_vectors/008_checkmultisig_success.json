@@ -1,0 +1,14 @@
+{
+  "name": "checkmultisig_success",
+  "asm": ["OP_2", "<pk1>", "<pk2>", "OP_2", "<sig1>", "<sig2>", "OP_CHECKMULTISIG"],
+  "bindings": {
+    "pk1": { "type": "pubkey_label", "label": "a" },
+    "pk2": { "type": "pubkey_label", "label": "b" },
+    "sig1": { "type": "signature_label", "label": "a" },
+    "sig2": { "type": "signature_label", "label": "b" }
+  },
+  "expected": {
+    "kind": "script_true",
+    "top": { "type": "bool", "value": true }
+  }
+}

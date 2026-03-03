@@ -1,0 +1,11 @@
+{
+  "name": "checksig_verify_failure",
+  "asm": ["<pubkey>", "<sig>", "OP_CHECKSIGVERIFY", "OP_1"],
+  "bindings": {
+    "pubkey": { "type": "pubkey_label", "label": "alice" },
+    "sig": { "type": "signature_label", "label": "bob" }
+  },
+  "expected": {
+    "kind": "script_false"
+  }
+}

@@ -1,0 +1,14 @@
+{
+  "name": "streaming_sha_chain",
+  "asm": ["<a>", "OP_SHA256INITIALIZE", "<b>", "OP_SHA256UPDATE", "<c>", "OP_SHA256FINALIZE", "<expected>", "OP_EQUAL"],
+  "bindings": {
+    "a": { "type": "bytes_utf8", "value": "alpha" },
+    "b": { "type": "bytes_utf8", "value": "beta" },
+    "c": { "type": "bytes_utf8", "value": "gamma" },
+    "expected": { "type": "bytes_hex", "value": "1647a134cf49d977dc9710c59b151b9e545c027c72745147fbf4b97dd38306a2" }
+  },
+  "expected": {
+    "kind": "script_true",
+    "top": { "type": "bool", "value": true }
+  }
+}
