@@ -843,14 +843,9 @@ fn generate_asm_from_statements_recursive(statements: &[Statement], asm: &mut Ve
                     generate_asm_from_statements_recursive(body, asm);
                 }
             }
-            Statement::LetBinding { name: _, value } => {
-                // Emit the expression value onto the stack
-                // TODO: Implement proper variable binding with stack tracking
-                generate_expression_asm(value, asm);
-            }
-            Statement::VarAssign { name: _, value } => {
-                // Reassignment currently follows let-binding semantics in the stack model:
-                // emit the new value so it becomes the active stack value.
+            Statement::LetBinding { name: _, value } | Statement::VarAssign { name: _, value } => {
+                // Local bindings currently lower to stack-value emission: the most recent
+                // emitted value is treated as the active binding in this stack model.
                 generate_expression_asm(value, asm);
             }
         }
