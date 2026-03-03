@@ -1,0 +1,7 @@
+{"type":"RunStarted","runId":"sw-mmaujxu2-69121197","timestampMs":1772556802381}
+{"type":"FrameCommitted","runId":"sw-mmaujxu2-69121197","frameNo":1,"xmlHash":"7aabc42f3323711cc8871523c374eeb021f3ba21467d9ec49c2ad5ec9b47ddc2","timestampMs":1772556802406}
+{"type":"NodeStarted","runId":"sw-mmaujxu2-69121197","nodeId":"policy-status","iteration":0,"attempt":1,"timestampMs":1772556802416}
+{"type":"NodeFinished","runId":"sw-mmaujxu2-69121197","nodeId":"policy-status","iteration":0,"attempt":1,"timestampMs":1772556802845}
+{"type":"FrameCommitted","runId":"sw-mmaujxu2-69121197","frameNo":2,"xmlHash":"2da412b8c93a5b98a4ecde8914c9ec0323bd0073b164711ced401667e050d0ce","timestampMs":1772556802856}
+{"type":"NodeStarted","runId":"sw-mmaujxu2-69121197","nodeId":"context-fixture-schema:research","iteration":0,"attempt":1,"timestampMs":1772556802865}
+{"type":"NodeStarted","runId":"sw-mmaujxu2-69121197","nodeId":"compiler-semantics-completion:research","iteration":0,"attempt":1,"timestampMs":1772556802865}
