@@ -669,8 +669,10 @@ fn generate_asm_from_statements_recursive(statements: &[Statement], asm: &mut Ve
                 // TODO: Implement proper variable binding with stack tracking
                 generate_expression_asm(value, asm);
             }
-            Statement::VarAssign { name: _, value: _ } => {
-                // TODO: Implement variable reassignment
+            Statement::VarAssign { name: _, value } => {
+                // Reassignment currently follows let-binding semantics in the stack model:
+                // emit the new value so it becomes the active stack value.
+                generate_expression_asm(value, asm);
             }
         }
     }
@@ -817,9 +819,7 @@ fn generate_expression_asm(expr: &Expression, asm: &mut Vec<String>) {
             }
         }
         Expression::ArrayIndex { array, index } => {
-            // TODO: Implement array indexing in Commit 6
-            generate_expression_asm(array, asm);
-            generate_expression_asm(index, asm);
+            emit_array_index_access_asm(array, index, asm);
         }
         Expression::ArrayLength(_) => {
             // TODO: Implement array length in Commit 6
@@ -1098,6 +1098,19 @@ fn generate_comparison_asm(left: &Expression, op: &str, right: &Expression, asm:
     }
 }
 
+fn emit_array_index_access_asm(array: &Expression, index: &Expression, asm: &mut Vec<String>) {
+    match (array, index) {
+        (Expression::Variable(array_name), Expression::Literal(index_value))
+        | (Expression::Variable(array_name), Expression::Variable(index_value)) => {
+            asm.push(format!("<{}_{}>", array_name, index_value));
+        }
+        _ => panic!(
+            "unsupported array index expression during codegen: {:?}[{:?}]",
+            array, index
+        ),
+    }
+}
+
 /// Generate assembly instructions for a requirement (legacy function)
 #[allow(dead_code)]
 fn generate_base_asm_instructions(requirements: &[Requirement]) -> Vec<String> {
@@ -1318,9 +1331,7 @@ fn emit_expression_asm(expr: &Expression, asm: &mut Vec<String>) {
             }
         }
         Expression::ArrayIndex { array, index } => {
-            // TODO: Implement array indexing in Commit 6
-            emit_expression_asm(array, asm);
-            emit_expression_asm(index, asm);
+            emit_array_index_access_asm(array, index, asm);
         }
         Expression::ArrayLength(_) => {
             // TODO: Implement array length in Commit 6

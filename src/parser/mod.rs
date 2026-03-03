@@ -5,6 +5,7 @@ use crate::models::{
 use pest::iterators::{Pair, Pairs};
 use pest::Parser;
 use pest_derive::Parser;
+use std::collections::HashSet;
 
 /// Pest parser generated from grammar.pest
 #[derive(Parser)]
@@ -54,6 +55,7 @@ fn build_ast(pairs: Pairs<Rule>) -> Result<Contract, String> {
 /// Parse a contract definition including options block, name, parameters, and functions
 fn parse_contract(contract: &mut Contract, pair: Pair<Rule>) -> Result<(), String> {
     let mut inner_pairs = pair.into_inner().peekable();
+    let mut known_internal_functions: HashSet<String> = HashSet::new();
 
     // Optional options block
     if inner_pairs
@@ -79,7 +81,10 @@ fn parse_contract(contract: &mut Contract, pair: Pair<Rule>) -> Result<(), Strin
     // Functions
     for func_pair in inner_pairs {
         if func_pair.as_rule() == Rule::function {
-            let func = parse_function(func_pair)?;
+            let func = parse_function(func_pair, &known_internal_functions)?;
+            if func.is_internal {
+                known_internal_functions.insert(func.name.clone());
+            }
             contract.functions.push(func);
         }
     }
@@ -124,7 +129,10 @@ fn parse_options_block(contract: &mut Contract, pair: Pair<Rule>) -> Result<(), 
 }
 
 /// Parse a function definition
-fn parse_function(pair: Pair<Rule>) -> Result<Function, String> {
+fn parse_function(
+    pair: Pair<Rule>,
+    known_internal_functions: &HashSet<String>,
+) -> Result<Function, String> {
     let mut func = Function {
         name: String::new(),
         parameters: Vec::new(),
@@ -151,12 +159,12 @@ fn parse_function(pair: Pair<Rule>) -> Result<Function, String> {
         if next_pair.as_rule() == Rule::function_modifier {
             func.is_internal = true;
             for req_pair in inner_pairs {
-                parse_function_body(&mut func, req_pair)?;
+                parse_function_body(&mut func, req_pair, known_internal_functions)?;
             }
         } else {
-            parse_function_body(&mut func, next_pair)?;
+            parse_function_body(&mut func, next_pair, known_internal_functions)?;
             for req_pair in inner_pairs {
-                parse_function_body(&mut func, req_pair)?;
+                parse_function_body(&mut func, req_pair, known_internal_functions)?;
             }
         }
     };
@@ -165,7 +173,11 @@ fn parse_function(pair: Pair<Rule>) -> Result<Function, String> {
 }
 
 /// Parse a statement in a function body (require, let binding, function call, variable declaration)
-fn parse_function_body(func: &mut Function, pair: Pair<Rule>) -> Result<(), String> {
+fn parse_function_body(
+    func: &mut Function,
+    pair: Pair<Rule>,
+    known_internal_functions: &HashSet<String>,
+) -> Result<(), String> {
     match pair.as_rule() {
         Rule::require_stmt => {
             let mut inner = pair.into_inner();
@@ -227,10 +239,10 @@ fn parse_function_body(func: &mut Function, pair: Pair<Rule>) -> Result<(), Stri
             let then_block = inner
                 .next()
                 .ok_or_else(|| "Parse error: Missing then block in if statement".to_string())?;
-            let then_body = parse_block(then_block)?;
+            let then_body = parse_block(then_block, known_internal_functions)?;
 
             let else_body = if let Some(else_block) = inner.next() {
-                Some(parse_block(else_block)?)
+                Some(parse_block(else_block, known_internal_functions)?)
             } else {
                 None
             };
@@ -261,7 +273,7 @@ fn parse_function_body(func: &mut Function, pair: Pair<Rule>) -> Result<(), Stri
             let body_block = inner
                 .next()
                 .ok_or_else(|| "Parse error: Missing body in for loop".to_string())?;
-            let body = parse_block(body_block)?;
+            let body = parse_block(body_block, known_internal_functions)?;
 
             func.statements.push(Statement::ForIn {
                 index_var,
@@ -272,8 +284,28 @@ fn parse_function_body(func: &mut Function, pair: Pair<Rule>) -> Result<(), Stri
             Ok(())
         }
         Rule::function_call_stmt => {
-            // Function calls to internal helpers — not yet fully supported
-            Ok(())
+            let called_function = pair
+                .clone()
+                .into_inner()
+                .next()
+                .map(|inner| inner.as_str().to_string())
+                .ok_or_else(|| {
+                    "Parse error: Missing function name in function call statement".to_string()
+                })?;
+
+            if known_internal_functions.contains(&called_function) {
+                // Internal helper calls are parsed but currently lowered by dedicated helper
+                // patterns elsewhere in the compiler pipeline.
+                return Ok(());
+            }
+
+            let span = pair.as_span();
+            let (line, column) = span.start_pos().line_col();
+            let function_call = pair.as_str().trim();
+            Err(format!(
+                "compile error at line {line}, column {column}: function call statement '{}' is not supported",
+                function_call
+            ))
         }
         Rule::variable_declaration => {
             // Typed variable declaration - treat like let binding
@@ -299,7 +331,10 @@ fn parse_function_body(func: &mut Function, pair: Pair<Rule>) -> Result<(), Stri
 // ─── Expression Parsing ────────────────────────────────────────────────────────
 
 // Parse a block of statements
-fn parse_block(pair: Pair<Rule>) -> Result<Vec<Statement>, String> {
+fn parse_block(
+    pair: Pair<Rule>,
+    known_internal_functions: &HashSet<String>,
+) -> Result<Vec<Statement>, String> {
     let mut statements = Vec::new();
 
     for inner in pair.into_inner() {
@@ -311,7 +346,7 @@ fn parse_block(pair: Pair<Rule>) -> Result<Vec<Statement>, String> {
             is_internal: false,
         };
 
-        parse_function_body(&mut temp_func, inner)?;
+        parse_function_body(&mut temp_func, inner, known_internal_functions)?;
         statements.extend(temp_func.statements);
     }
 
@@ -482,6 +517,7 @@ fn parse_primary_expr(pair: Pair<Rule>) -> Result<Expression, String> {
         Rule::tx_introspection => parse_tx_introspection_to_expression(pair),
         Rule::constructor => Ok(Expression::Property(pair.as_str().to_string())),
         Rule::function_call => Ok(Expression::Property(pair.as_str().to_string())),
+        Rule::array_index_access => parse_array_index_access(pair),
         Rule::additive_expr => parse_additive_expr(pair),
         Rule::multiplicative_expr => parse_multiplicative_expr(pair),
         _ => {
@@ -489,6 +525,26 @@ fn parse_primary_expr(pair: Pair<Rule>) -> Result<Expression, String> {
             Ok(Expression::Property(pair.as_str().to_string()))
         }
     }
+}
+
+fn parse_array_index_access(pair: Pair<Rule>) -> Result<Expression, String> {
+    let mut inner = pair.into_inner();
+    let array_name = inner
+        .next()
+        .ok_or("Missing array name in index access")?
+        .as_str()
+        .to_string();
+    let index_pair = inner.next().ok_or("Missing index in array access")?;
+    let index = match index_pair.as_rule() {
+        Rule::identifier => Expression::Variable(index_pair.as_str().to_string()),
+        Rule::number_literal => Expression::Literal(index_pair.as_str().to_string()),
+        _ => return Err("Unsupported array index expression".to_string()),
+    };
+
+    Ok(Expression::ArrayIndex {
+        array: Box::new(Expression::Variable(array_name)),
+        index: Box::new(index),
+    })
 }
 
 /// Parse a complex expression into a Requirement AST node
