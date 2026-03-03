@@ -11,12 +11,7 @@ use tempfile::NamedTempFile;
 
 use parity_support::{load_vectors, materialize_bindings};
 
-const KNOWN_INTROSPECTOR_DELTAS: &[&str] = &[
-    "checkmultisig_success",
-    "checksig_verify_success",
-    "checksigfromstack_verify_success",
-    "introspection_txhash_equal",
-];
+const KNOWN_INTROSPECTOR_DELTAS: &[&str] = &[];
 
 #[derive(Debug, Serialize)]
 struct ExternalParityInput {

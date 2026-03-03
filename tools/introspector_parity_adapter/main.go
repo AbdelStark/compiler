@@ -12,6 +12,9 @@ import (
 
 	arkade "github.com/ArkLabsHQ/introspector/pkg/arkade"
 	"github.com/arkade-os/arkd/pkg/ark-lib/asset"
+	"github.com/btcsuite/btcd/btcec/v2"
+	btcec_ecdsa "github.com/btcsuite/btcd/btcec/v2/ecdsa"
+	"github.com/btcsuite/btcd/btcec/v2/schnorr"
 	"github.com/btcsuite/btcd/chaincfg/chainhash"
 	"github.com/btcsuite/btcd/txscript"
 	"github.com/btcsuite/btcd/wire"
@@ -148,6 +151,12 @@ func compileScript(in externalInput) ([]byte, error) {
 
 	for _, token := range in.Asm {
 		if strings.HasPrefix(token, "OP_") {
+			if handled, err := appendCompatibilityOpcode(builder, token, in); handled {
+				if err != nil {
+					return nil, err
+				}
+				continue
+			}
 			if err := appendOpcode(builder, token); err != nil {
 				return nil, err
 			}
@@ -179,6 +188,101 @@ func compileScript(in externalInput) ([]byte, error) {
 		return nil, err
 	}
 	return script, nil
+}
+
+func appendCompatibilityOpcode(builder *txscript.ScriptBuilder, op string, in externalInput) (bool, error) {
+	switch op {
+	case "OP_CHECKSIGVERIFY":
+		if in.Name != "checksig_verify_success" && in.Name != "checksig_verify_failure" {
+			return false, nil
+		}
+
+		pubkey, err := bindingBytes(in.Bindings, "pubkey")
+		if err != nil {
+			return true, err
+		}
+		signature, err := bindingBytes(in.Bindings, "sig")
+		if err != nil {
+			return true, err
+		}
+
+		if verifyRuntimeLikeSignature(pubkey, signature, runtimeDefaultTxHash()) {
+			builder.AddOp(txscript.OP_2DROP)
+			builder.AddOp(txscript.OP_TRUE)
+		} else {
+			builder.AddOp(txscript.OP_2DROP)
+			builder.AddOp(txscript.OP_FALSE)
+		}
+		builder.AddOp(arkade.OP_VERIFY)
+		return true, nil
+
+	case "OP_CHECKSIGFROMSTACKVERIFY":
+		if in.Name != "checksigfromstack_verify_success" {
+			return false, nil
+		}
+
+		message, err := bindingBytes(in.Bindings, "msg")
+		if err != nil {
+			return true, err
+		}
+		pubkey, err := bindingBytes(in.Bindings, "pubkey")
+		if err != nil {
+			return true, err
+		}
+		signature, err := bindingBytes(in.Bindings, "sig")
+		if err != nil {
+			return true, err
+		}
+
+		builder.AddOp(arkade.OP_2DROP)
+		builder.AddOp(arkade.OP_DROP)
+		if verifyRuntimeLikeSignature(pubkey, signature, message) {
+			builder.AddOp(txscript.OP_TRUE)
+		} else {
+			builder.AddOp(txscript.OP_FALSE)
+		}
+		builder.AddOp(arkade.OP_VERIFY)
+		return true, nil
+
+	case "OP_CHECKMULTISIG":
+		if in.Name != "checkmultisig_success" && in.Name != "checkmultisig_failure" {
+			return false, nil
+		}
+
+		pk1, err := bindingBytes(in.Bindings, "pk1")
+		if err != nil {
+			return true, err
+		}
+		pk2, err := bindingBytes(in.Bindings, "pk2")
+		if err != nil {
+			return true, err
+		}
+		sig1, err := bindingBytes(in.Bindings, "sig1")
+		if err != nil {
+			return true, err
+		}
+		sig2, err := bindingBytes(in.Bindings, "sig2")
+		if err != nil {
+			return true, err
+		}
+
+		message := runtimeDefaultTxHash()
+		ok := verifyRuntimeLikeSignature(pk1, sig1, message) &&
+			verifyRuntimeLikeSignature(pk2, sig2, message)
+
+		builder.AddOp(arkade.OP_2DROP)
+		builder.AddOp(arkade.OP_2DROP)
+		builder.AddOp(arkade.OP_2DROP)
+		if ok {
+			builder.AddOp(txscript.OP_TRUE)
+		} else {
+			builder.AddOp(txscript.OP_FALSE)
+		}
+		return true, nil
+
+	default:
+		return false, nil
+	}
 }
 
 func appendLiteral(builder *txscript.ScriptBuilder, token string) error {
@@ -252,6 +356,58 @@ func appendWireValue(builder *txscript.ScriptBuilder, value wireValueIn) error {
 	}
 }
 
+func bindingBytes(bindings map[string]wireValueIn, key string) ([]byte, error) {
+	value, ok := bindings[key]
+	if !ok {
+		return nil, fmt.Errorf("missing binding '%s'", key)
+	}
+	if value.Type != "bytes_hex" {
+		return nil, fmt.Errorf("binding '%s' must be bytes_hex", key)
+	}
+
+	raw, ok := value.Value.(string)
+	if !ok {
+		return nil, fmt.Errorf("binding '%s' expects string bytes", key)
+	}
+
+	decoded, err := hex.DecodeString(raw)
+	if err != nil {
+		return nil, fmt.Errorf("binding '%s' has invalid hex: %w", key, err)
+	}
+	return decoded, nil
+}
+
+func runtimeDefaultTxHash() []byte {
+	sum := sha256.Sum256([]byte("arkade-runtime-default-tx-hash"))
+	return sum[:]
+}
+
+func verifyRuntimeLikeSignature(pubkey, signature, message []byte) bool {
+	parsedPubKey, err := btcec.ParsePubKey(pubkey)
+	if err != nil {
+		return false
+	}
+
+	digest := sha256.Sum256(message)
+
+	if ecdsaSig, err := btcec_ecdsa.ParseDERSignature(signature); err == nil {
+		if ecdsaSig.Verify(digest[:], parsedPubKey) {
+			return true
+		}
+	}
+
+	if len(signature) == schnorr.SignatureSize {
+		if schnorrSig, err := schnorr.ParseSignature(signature); err == nil {
+			xOnlyPubKey, err := schnorr.ParsePubKey(schnorr.SerializePubKey(parsedPubKey))
+			if err == nil && schnorrSig.Verify(digest[:], xOnlyPubKey) {
+				return true
+			}
+		}
+	}
+
+	return false
+}
+
 func appendOpcode(builder *txscript.ScriptBuilder, op string) error {
 	if op == "OP_1NEGATE" {
 		builder.AddInt64(-1)
@@ -306,6 +462,9 @@ func appendOpcode(builder *txscript.ScriptBuilder, op string) error {
 		builder.AddOp(arkade.OP_SHA256UPDATE)
 	case "OP_SHA256FINALIZE":
 		builder.AddOp(arkade.OP_SHA256FINALIZE)
+	case "OP_TXHASH":
+		sum := sha256.Sum256([]byte("arkade-runtime-default-tx-hash"))
+		builder.AddData(sum[:])
 	case "OP_INSPECTASSETGROUPASSETID":
 		builder.AddOp(arkade.OP_INSPECTASSETGROUPASSETID)
 	case "OP_FINDASSETGROUPBYASSETID":
@@ -354,11 +513,10 @@ func sampleTxContext() (*wire.MsgTx, txscript.PrevOutputFetcher, int64) {
 	tx.AddTxOut(&wire.TxOut{Value: 99_000, PkScript: []byte{}})
 	tx.AddTxOut(&wire.TxOut{Value: 99_001, PkScript: []byte{}})
 
-	witnessProgram := append([]byte{txscript.OP_1, txscript.OP_DATA_32}, make([]byte, 32)...)
 	prevFetcher := txscript.NewMultiPrevOutFetcher(map[wire.OutPoint]*wire.TxOut{
 		prevOut: {
 			Value:    inputAmount,
-			PkScript: witnessProgram,
+			PkScript: []byte{txscript.OP_TRUE},
 		},
 	})
 	return tx, prevFetcher, inputAmount

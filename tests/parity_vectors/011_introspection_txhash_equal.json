@@ -1,6 +1,6 @@
 {
   "name": "introspection_txhash_equal",
-  "asm": ["OP_TXHASH", "OP_DUP", "OP_TXHASH", "OP_EQUAL"],
+  "asm": ["OP_TXHASH", "OP_DUP", "OP_TXHASH", "OP_EQUAL", "OP_NIP"],
   "expected": {
     "kind": "script_true",
     "top": { "type": "bool", "value": true }
