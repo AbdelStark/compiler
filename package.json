@@ -1,0 +1,6 @@
+{
+  "dependencies": {
+    "agentix": "github:AbdelStark/agentix",
+    "smithers-orchestrator": "^0.9.1"
+  }
+}

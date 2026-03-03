@@ -1,12 +1,30 @@
 use std::collections::HashMap;
 
+#[cfg(not(target_arch = "wasm32"))]
 use secp256k1::ecdsa::Signature as EcdsaSignature;
+#[cfg(not(target_arch = "wasm32"))]
 use secp256k1::schnorr::Signature as SchnorrSignature;
+#[cfg(not(target_arch = "wasm32"))]
 use secp256k1::{Message, PublicKey, Secp256k1, SecretKey};
 use sha2::{Digest, Sha256};
 
 use crate::runtime::error::{RuntimeError, RuntimeErrorCode};
 use crate::runtime::value::StackValue;
+
+#[cfg(target_arch = "wasm32")]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SecretKey([u8; 32]);
+
+#[cfg(target_arch = "wasm32")]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PublicKey([u8; 33]);
+
+#[cfg(target_arch = "wasm32")]
+impl PublicKey {
+    pub fn serialize(&self) -> [u8; 33] {
+        self.0
+    }
+}
 
 #[derive(Debug, Clone)]
 pub struct AssetEntry {
@@ -206,6 +224,7 @@ impl ExecutionEnv {
         Ok(StackValue::Symbol(key.to_string()))
     }
 
+    #[cfg(not(target_arch = "wasm32"))]
     pub fn verify_signature(
         &self,
         pubkey: &StackValue,
@@ -246,6 +265,24 @@ impl ExecutionEnv {
         false
     }
 
+    #[cfg(target_arch = "wasm32")]
+    pub fn verify_signature(
+        &self,
+        pubkey: &StackValue,
+        signature: &StackValue,
+        message: Option<&StackValue>,
+    ) -> bool {
+        let pk_bytes = stack_value_to_bytes(pubkey);
+        let sig_bytes = stack_value_to_bytes(signature);
+        if pk_bytes.len() != 33 || sig_bytes.len() != 32 {
+            return false;
+        }
+
+        let message_bytes = self.signature_message(message);
+        let expected = Self::sign_message_for_pubkey_bytes(&pk_bytes, &message_bytes);
+        sig_bytes == expected
+    }
+
     pub fn verify_multisig(&self, pubkeys: &[StackValue], signatures: &[StackValue]) -> bool {
         if signatures.len() > pubkeys.len() {
             return false;
@@ -257,6 +294,7 @@ impl ExecutionEnv {
             .all(|(sig, pk)| self.verify_signature(pk, sig, None))
     }
 
+    #[cfg(not(target_arch = "wasm32"))]
     pub fn derive_keypair_for_label(label: &str) -> (SecretKey, PublicKey) {
         let secp = Secp256k1::signing_only();
         let mut seed: [u8; 32] = Sha256::digest(label.as_bytes()).into();
@@ -269,6 +307,16 @@ impl ExecutionEnv {
         }
     }
 
+    #[cfg(target_arch = "wasm32")]
+    pub fn derive_keypair_for_label(label: &str) -> (SecretKey, PublicKey) {
+        let seed: [u8; 32] = Sha256::digest(label.as_bytes()).into();
+        let mut compressed = [0u8; 33];
+        compressed[0] = 0x02;
+        compressed[1..].copy_from_slice(&seed);
+        (SecretKey(seed), PublicKey(compressed))
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
     pub fn sign_message_for_label(label: &str, message: &[u8]) -> Vec<u8> {
         let secp = Secp256k1::signing_only();
         let (secret, _) = Self::derive_keypair_for_label(label);
@@ -277,10 +325,24 @@ impl ExecutionEnv {
         secp.sign_ecdsa(msg, &secret).serialize_der().to_vec()
     }
 
+    #[cfg(target_arch = "wasm32")]
+    pub fn sign_message_for_label(label: &str, message: &[u8]) -> Vec<u8> {
+        let (_secret, public) = Self::derive_keypair_for_label(label);
+        Self::sign_message_for_pubkey_bytes(&public.serialize(), message)
+    }
+
     fn signature_message(&self, message: Option<&StackValue>) -> Vec<u8> {
         message
             .map(stack_value_to_bytes)
             .unwrap_or_else(|| self.tx_context.tx_hash.clone())
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    fn sign_message_for_pubkey_bytes(pubkey_bytes: &[u8], message: &[u8]) -> Vec<u8> {
+        let mut material = Vec::with_capacity(pubkey_bytes.len() + message.len());
+        material.extend_from_slice(pubkey_bytes);
+        material.extend_from_slice(message);
+        Sha256::digest(material).to_vec()
     }
 }
 

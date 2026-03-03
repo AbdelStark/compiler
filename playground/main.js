@@ -1,6 +1,6 @@
 // Arkade Playground - Main Application
 // Import default export for WASM initialization, plus the exported functions
-import initWasm, { compile, version, validate, init as initPanicHook } from './pkg/arkade_compiler.js';
+import initWasm, * as wasmApi from './pkg/arkade_compiler.js';
 import * as contracts from './contracts.js';
 
 // Projects: collections of related contracts
@@ -34,6 +34,10 @@ let openTabs = [];
 let fileContents = {}; // Cache of file contents for each open file
 let expandedFolders = new Set(); // Track which folders are expanded
 let lastCompiledSource = null; // Source that produced the current output
+let lastCompiledArtifactJson = null; // Raw JSON artifact string
+let lastRuntimeResult = null; // Parsed runtime result JSON
+let runtimeStepIndex = -1;
+let runtimeFunctionVariants = [];
 
 // ── localStorage persistence ──────────────────────────────────────
 const STORAGE_KEY = 'arkade-playground';
@@ -594,10 +598,12 @@ function promptNewStandaloneFile() {
 async function initCompiler() {
     try {
         await initWasm();
-        initPanicHook();
+        if (typeof wasmApi.init === 'function') {
+            wasmApi.init();
+        }
         wasmReady = true;
 
-        const ver = version();
+        const ver = typeof wasmApi.version === 'function' ? wasmApi.version() : 'unknown';
         document.getElementById('compiler-version').textContent = `v${ver}`;
         document.getElementById('footer-version').textContent = `v${ver}`;
 
@@ -1078,6 +1084,54 @@ function initMonaco() {
     });
 }
 
+function resetRuntimeUI(message) {
+    lastRuntimeResult = null;
+    runtimeStepIndex = -1;
+
+    const summaryEl = document.getElementById('runtime-summary');
+    summaryEl.classList.remove('success', 'error');
+    summaryEl.textContent = message;
+
+    document.getElementById('runtime-step-label').textContent = 'Step 0 / 0';
+    document.getElementById('runtime-step').textContent = '';
+    document.getElementById('runtime-main-stack').textContent = '';
+    document.getElementById('runtime-alt-stack').textContent = '';
+    document.getElementById('runtime-prev-step').disabled = true;
+    document.getElementById('runtime-next-step').disabled = true;
+}
+
+function loadRuntimeFunctionOptions(contract) {
+    const select = document.getElementById('runtime-function');
+    const runBtn = document.getElementById('runtime-run-btn');
+    runtimeFunctionVariants = [];
+    select.innerHTML = '';
+
+    if (!contract || !Array.isArray(contract.functions) || contract.functions.length === 0) {
+        const option = document.createElement('option');
+        option.textContent = 'Compile first';
+        option.value = '';
+        select.appendChild(option);
+        select.disabled = true;
+        runBtn.disabled = true;
+        return;
+    }
+
+    contract.functions.forEach((func) => {
+        runtimeFunctionVariants.push({
+            name: func.name,
+            serverVariant: Boolean(func.serverVariant)
+        });
+        const option = document.createElement('option');
+        const variant = func.serverVariant ? 'cooperative' : 'exit';
+        option.value = String(runtimeFunctionVariants.length - 1);
+        option.textContent = `${func.name} (${variant})`;
+        select.appendChild(option);
+    });
+
+    select.disabled = false;
+    runBtn.disabled = false;
+}
+
 // Mark the editor as having uncompiled changes
 function markDirty() {
     const btn = document.getElementById('compile-btn');
@@ -1089,6 +1143,10 @@ function markDirty() {
     const statusEl = document.getElementById('compile-status');
     statusEl.textContent = '';
     statusEl.className = 'compile-status';
+
+    lastCompiledArtifactJson = null;
+    loadRuntimeFunctionOptions(null);
+    resetRuntimeUI('Source changed. Compile again before runtime execution.');
 }
 
 // Mark the editor as up-to-date with compiled output
@@ -1106,13 +1164,20 @@ function doCompile() {
     clearErrors();
 
     try {
-        const result = compile(source);
+        const result = wasmApi.compile(source);
+        const parsed = JSON.parse(result);
         lastCompiledSource = source;
+        lastCompiledArtifactJson = result;
         displayJson(result);
         displayAsm(result);
         showSuccess(result);
         markCompiled();
+        loadRuntimeFunctionOptions(parsed);
+        resetRuntimeUI('Compiled successfully. Select a function path and execute.');
     } catch (err) {
+        lastCompiledArtifactJson = null;
+        loadRuntimeFunctionOptions(null);
+        resetRuntimeUI('Compile a contract to enable runtime execution.');
         showError(err.toString());
     }
 }
@@ -1194,6 +1259,205 @@ function highlightAsm(asm) {
         .join(' ');
 }
 
+function escapeHtml(text) {
+    return String(text)
+        .replaceAll('&', '&amp;')
+        .replaceAll('<', '&lt;')
+        .replaceAll('>', '&gt;')
+        .replaceAll('"', '&quot;')
+        .replaceAll("'", '&#39;');
+}
+
+function formatRuntimeStackValue(value) {
+    if (!value || typeof value !== 'object') {
+        return String(value);
+    }
+
+    switch (value.type) {
+        case 'int':
+            return String(value.value);
+        case 'bool':
+            return value.value ? 'true' : 'false';
+        case 'bytes_hex':
+            return `0x${value.value}`;
+        case 'symbol':
+            return `<${value.value}>`;
+        default:
+            return JSON.stringify(value);
+    }
+}
+
+function runtimeStackToText(values) {
+    if (!Array.isArray(values) || values.length === 0) {
+        return '(empty)';
+    }
+    return values
+        .map((value, idx) => `${String(idx).padStart(3, '0')}: ${formatRuntimeStackValue(value)}`)
+        .join('\n');
+}
+
+function parseRuntimeBindings() {
+    const raw = document.getElementById('runtime-bindings').value || '';
+    const out = {};
+    const lines = raw.split('\n');
+
+    for (let i = 0; i < lines.length; i++) {
+        const line = lines[i].trim();
+        if (!line || line.startsWith('#') || line.startsWith('//')) {
+            continue;
+        }
+        const eq = line.indexOf('=');
+        if (eq <= 0) {
+            throw new Error(`Invalid binding line ${i + 1}: expected key=value`);
+        }
+        const key = line.slice(0, eq).trim();
+        const rawValue = line.slice(eq + 1).trim();
+        if (!key) {
+            throw new Error(`Invalid binding line ${i + 1}: missing key`);
+        }
+
+        if (rawValue.toLowerCase().startsWith('hex:')) {
+            out[key] = { type: 'bytes_hex', value: rawValue.slice(4) };
+        } else if (rawValue.toLowerCase().startsWith('utf8:')) {
+            out[key] = { type: 'bytes_utf8', value: rawValue.slice(5) };
+        } else if (/^(true|false)$/i.test(rawValue)) {
+            out[key] = { type: 'bool', value: /^true$/i.test(rawValue) };
+        } else if (/^-?\d+$/.test(rawValue)) {
+            out[key] = { type: 'int', value: Number.parseInt(rawValue, 10) };
+        } else {
+            out[key] = { type: 'symbol', value: rawValue };
+        }
+    }
+
+    return out;
+}
+
+function renderRuntimeStep() {
+    const stepLabel = document.getElementById('runtime-step-label');
+    const stepContainer = document.getElementById('runtime-step');
+    const prevBtn = document.getElementById('runtime-prev-step');
+    const nextBtn = document.getElementById('runtime-next-step');
+
+    const telemetry = lastRuntimeResult?.telemetry || [];
+    if (telemetry.length === 0) {
+        runtimeStepIndex = -1;
+        stepLabel.textContent = 'Step 0 / 0';
+        stepContainer.textContent = '';
+        prevBtn.disabled = true;
+        nextBtn.disabled = true;
+        return;
+    }
+
+    if (runtimeStepIndex < 0) {
+        runtimeStepIndex = 0;
+    }
+    if (runtimeStepIndex >= telemetry.length) {
+        runtimeStepIndex = telemetry.length - 1;
+    }
+
+    const step = telemetry[runtimeStepIndex];
+    stepLabel.textContent = `Step ${runtimeStepIndex + 1} / ${telemetry.length}`;
+    prevBtn.disabled = runtimeStepIndex === 0;
+    nextBtn.disabled = runtimeStepIndex >= telemetry.length - 1;
+
+    const before = runtimeStackToText(step.stack_before);
+    const after = runtimeStackToText(step.stack_after);
+
+    stepContainer.innerHTML = `
+<div class="runtime-step-meta">
+  <span>ip=${step.ip}</span>
+  <span>token=${escapeHtml(step.token)}</span>
+  <span>status=${step.status}</span>
+</div>
+<div class="runtime-step-stacks">
+  <div>
+    <h4>Stack Before</h4>
+    <pre>${escapeHtml(before)}</pre>
+  </div>
+  <div>
+    <h4>Stack After</h4>
+    <pre>${escapeHtml(after)}</pre>
+  </div>
+</div>`;
+}
+
+function renderRuntimeResult(runtimeJson) {
+    const summaryEl = document.getElementById('runtime-summary');
+    summaryEl.classList.remove('success', 'error');
+    summaryEl.classList.add(runtimeJson.outcome === 'runtime_error' ? 'error' : 'success');
+
+    let summary = `Outcome: ${runtimeJson.outcome}`;
+    if (runtimeJson.error_code) {
+        summary += ` (${runtimeJson.error_code})`;
+    }
+    if (runtimeJson.error_message) {
+        summary += `\n${runtimeJson.error_message}`;
+    }
+    summary += `\nFunction: ${runtimeJson.function_name} | Variant: ${runtimeJson.server_variant ? 'cooperative' : 'exit'}`;
+    summary += `\nSteps: ${runtimeJson.telemetry?.length || 0}`;
+    summaryEl.textContent = summary;
+
+    document.getElementById('runtime-main-stack').textContent = runtimeStackToText(runtimeJson.final_main_stack);
+    document.getElementById('runtime-alt-stack').textContent = runtimeStackToText(runtimeJson.final_alt_stack);
+
+    lastRuntimeResult = runtimeJson;
+    runtimeStepIndex = runtimeJson.telemetry?.length ? 0 : -1;
+    renderRuntimeStep();
+}
+
+function selectedRuntimeFunction() {
+    const select = document.getElementById('runtime-function');
+    if (!select || select.value === '') {
+        throw new Error('No runtime function selected');
+    }
+    const idx = Number.parseInt(select.value, 10);
+    if (!Number.isFinite(idx) || idx < 0 || idx >= runtimeFunctionVariants.length) {
+        throw new Error('Invalid runtime function selection');
+    }
+    return runtimeFunctionVariants[idx];
+}
+
+function ensureRuntimeArtifactIsFresh() {
+    if (!editor) {
+        return false;
+    }
+    if (editor.getValue() !== lastCompiledSource || !lastCompiledArtifactJson) {
+        doCompile();
+    }
+    return Boolean(lastCompiledArtifactJson);
+}
+
+function runRuntime() {
+    if (!wasmReady || !ensureRuntimeArtifactIsFresh()) {
+        return;
+    }
+
+    try {
+        const fn = selectedRuntimeFunction();
+        const strict = document.getElementById('runtime-strict').checked;
+        const bindings = parseRuntimeBindings();
+        if (typeof wasmApi.execute_contract_json !== 'function') {
+            throw new Error(
+                'WASM package does not expose runtime API yet. Run ./playground/build.sh and reload.'
+            );
+        }
+        const runtimeJson = wasmApi.execute_contract_json(
+            lastCompiledArtifactJson,
+            fn.name,
+            fn.serverVariant,
+            JSON.stringify(bindings),
+            strict
+        );
+        renderRuntimeResult(JSON.parse(runtimeJson));
+        switchTab('runtime');
+    } catch (err) {
+        const summaryEl = document.getElementById('runtime-summary');
+        summaryEl.classList.remove('success');
+        summaryEl.classList.add('error');
+        summaryEl.textContent = `Runtime execution failed:\n${err}`;
+    }
+}
+
 // Show compilation success
 function showSuccess(jsonStr) {
     const statusEl = document.getElementById('compile-status');
@@ -1265,7 +1529,10 @@ async function copyOutput() {
     const activeTab = document.querySelector('.output-tab.active');
     if (!activeTab) return;
 
-    const text = activeTab.textContent;
+    let text = activeTab.textContent;
+    if (activeTab.id === 'runtime-output' && lastRuntimeResult) {
+        text = JSON.stringify(lastRuntimeResult, null, 2);
+    }
     try {
         await navigator.clipboard.writeText(text);
         // Visual feedback
@@ -1379,6 +1646,21 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // Compile button
     document.getElementById('compile-btn').addEventListener('click', doCompile);
+    document.getElementById('runtime-run-btn').addEventListener('click', runRuntime);
+    document.getElementById('runtime-prev-step').addEventListener('click', () => {
+        if (!lastRuntimeResult) return;
+        runtimeStepIndex = Math.max(0, runtimeStepIndex - 1);
+        renderRuntimeStep();
+    });
+    document.getElementById('runtime-next-step').addEventListener('click', () => {
+        if (!lastRuntimeResult) return;
+        runtimeStepIndex = Math.min(lastRuntimeResult.telemetry.length - 1, runtimeStepIndex + 1);
+        renderRuntimeStep();
+    });
+    document.getElementById('runtime-function').addEventListener('change', () => {
+        if (!lastRuntimeResult) return;
+        resetRuntimeUI('Function changed. Execute to refresh runtime results.');
+    });
 
     // Cmd/Ctrl+S → compile (prevent browser save dialog)
     document.addEventListener('keydown', (e) => {
@@ -1397,6 +1679,9 @@ document.addEventListener('DOMContentLoaded', () => {
     // Sidebar action buttons
     document.getElementById('new-file-btn').addEventListener('click', promptNewStandaloneFile);
     document.getElementById('new-folder-btn').addEventListener('click', promptNewFolder);
+
+    loadRuntimeFunctionOptions(null);
+    resetRuntimeUI('Compile a contract to enable runtime execution.');
 
     // Dismiss context menu on click outside
     document.addEventListener('click', hideContextMenu);

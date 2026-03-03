@@ -72,6 +72,9 @@
                     <button class="tab" data-tab="asm">
                         <i class="fas fa-microchip"></i> Assembly
                     </button>
+                    <button class="tab" data-tab="runtime">
+                        <i class="fas fa-forward"></i> Runtime
+                    </button>
                     <button class="tab" data-tab="errors">
                         <i class="fas fa-exclamation-triangle"></i> Errors
                         <span class="error-count" id="error-count"></span>
@@ -85,6 +88,48 @@
             <div class="output-content">
                 <div id="json-output" class="output-tab active"></div>
                 <div id="asm-output" class="output-tab"></div>
+                <div id="runtime-output" class="output-tab">
+                    <div class="runtime-controls">
+                        <label for="runtime-function">Function</label>
+                        <select id="runtime-function"></select>
+                        <label class="runtime-checkbox">
+                            <input type="checkbox" id="runtime-strict">
+                            Strict placeholders
+                        </label>
+                        <button id="runtime-run-btn" class="btn-secondary">
+                            <i class="fas fa-bolt"></i> Execute
+                        </button>
+                    </div>
+                    <div class="runtime-bindings">
+                        <label for="runtime-bindings">Bindings (one per line: key=value)</label>
+                        <textarea id="runtime-bindings" spellcheck="false" placeholder="ownerSig=hex:30440220...
+refundTime=144
+preimage=utf8:hello"></textarea>
+                    </div>
+                    <div id="runtime-summary" class="runtime-summary">
+                        Compile a contract, then execute one function path here.
+                    </div>
+                    <div class="runtime-stepper">
+                        <button id="runtime-prev-step" class="btn-secondary" disabled>
+                            <i class="fas fa-chevron-left"></i> Prev
+                        </button>
+                        <span id="runtime-step-label">Step 0 / 0</span>
+                        <button id="runtime-next-step" class="btn-secondary" disabled>
+                            Next <i class="fas fa-chevron-right"></i>
+                        </button>
+                    </div>
+                    <div id="runtime-step" class="runtime-step"></div>
+                    <div class="runtime-stacks">
+                        <div class="runtime-stack-panel">
+                            <h4>Main Stack</h4>
+                            <pre id="runtime-main-stack"></pre>
+                        </div>
+                        <div class="runtime-stack-panel">
+                            <h4>Alt Stack</h4>
+                            <pre id="runtime-alt-stack"></pre>
+                        </div>
+                    </div>
+                </div>
                 <div id="errors-output" class="output-tab"></div>
             </div>
         </div>

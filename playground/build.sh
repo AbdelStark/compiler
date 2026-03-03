@@ -25,6 +25,15 @@ echo "[1/4] Generating contracts.js from examples..."
 # Build WASM package
 echo "[2/4] Building WASM package..."
 cd "$PROJECT_DIR"
+
+# Some environments pin wasm clang to Homebrew LLVM path that may not exist.
+# If the configured compiler is missing, fall back to toolchain defaults.
+if [[ -n "${CC_wasm32_unknown_unknown:-}" && ! -x "${CC_wasm32_unknown_unknown}" ]]; then
+    echo "Warning: CC_wasm32_unknown_unknown points to a missing compiler: ${CC_wasm32_unknown_unknown}"
+    echo "         Unsetting CC_wasm32_unknown_unknown for this build."
+    unset CC_wasm32_unknown_unknown
+fi
+
 wasm-pack build --target web --out-dir playground/pkg --features wasm
 
 # Clean up unnecessary files
