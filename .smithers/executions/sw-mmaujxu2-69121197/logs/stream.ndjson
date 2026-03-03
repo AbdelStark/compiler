@@ -8,3 +8,6 @@
 {"type":"NodeFinished","runId":"sw-mmaujxu2-69121197","nodeId":"context-fixture-schema:research","iteration":0,"attempt":1,"timestampMs":1772557072382}
 {"type":"FrameCommitted","runId":"sw-mmaujxu2-69121197","frameNo":3,"xmlHash":"39f9e9cb9430e19f727bea7f6995413aeaa70e76f708237bd99cfe46e5647a32","timestampMs":1772557072397}
 {"type":"NodeStarted","runId":"sw-mmaujxu2-69121197","nodeId":"context-fixture-schema:plan","iteration":0,"attempt":1,"timestampMs":1772557072408}
+{"type":"NodeFinished","runId":"sw-mmaujxu2-69121197","nodeId":"compiler-semantics-completion:research","iteration":0,"attempt":1,"timestampMs":1772557210330}
+{"type":"FrameCommitted","runId":"sw-mmaujxu2-69121197","frameNo":4,"xmlHash":"8d4000f0f1e02101c9cc6786743cadb25888ca36dbaad1ba6c06fdaaf3dacbbb","timestampMs":1772557210339}
+{"type":"NodeStarted","runId":"sw-mmaujxu2-69121197","nodeId":"compiler-semantics-completion:plan","iteration":0,"attempt":1,"timestampMs":1772557210348}
