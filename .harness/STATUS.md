@@ -40,10 +40,18 @@ This board maps to the required tags above by execution phase:
   - `tests/runtime_examples_e2e_test.rs`
   - `tests/runtime_cli_matrix_test.rs`
   - `tests/runtime_cli_run_test.rs` trace coverage
+- `[COMPLETED]` R17: Add opcode-surface completeness test (`tests/runtime_opcode_surface_test.rs`) that asserts every opcode declared in `src/opcodes/mod.rs` is handled by dispatcher (no `UnknownOpcode`/`UnsupportedOpcode`).
+- `[COMPLETED]` R18: Add deterministic replay and failure-classification vectors:
+  - `tests/runtime_determinism_test.rs`
+  - `tests/runtime_failure_classification_test.rs`
+- `[COMPLETED]` R19: Debugger depth upgrade with breakpoint support:
+  - CLI: `arkadec debug ... --breakpoint <ip>`
+  - TUI: toggle breakpoint key `b`, continue-to-breakpoint semantics, breakpoint markers in Script pane
+  - validation in `tests/runtime_cli_debug_boot_test.rs`
 
 ## Active Focus
 Current target: closed.
-Next transition: runtime phase-1 feature set complete and validated; proceed to semantic parity hardening and debugger UX depth.
+Next transition: runtime phase-2 parity-hardening and debugger breakpoint milestone complete; proceed to final semantic parity audit vs external interpreter.
 
 ## Open Risks
 - Introspection and streaming-hash semantics are implemented concretely for in-process runtime context, but not yet parity-audited against external `arkd`/`introspector` edge behavior for every corner case.
@@ -54,3 +62,5 @@ Next transition: runtime phase-1 feature set complete and validated; proceed to 
 - `[COMPLETED]` `cargo test` passed (including new runtime and CLI tests).
 - `[COMPLETED]` `cargo test --test runtime_crypto_test --test runtime_extended_opcodes_test --test runtime_introspection_test --test runtime_examples_e2e_test` passed.
 - `[COMPLETED]` `cargo test --test runtime_cli_run_test --test runtime_cli_debug_boot_test --test runtime_cli_matrix_test` passed.
+- `[COMPLETED]` `cargo test --test runtime_opcode_surface_test --test runtime_determinism_test --test runtime_failure_classification_test --test runtime_cli_debug_boot_test` passed.
+- `[COMPLETED]` full `cargo test` passed after breakpoint/debugger and parity-hardening additions.

@@ -85,6 +85,9 @@ enum Command {
         trace: bool,
         #[arg(long, default_value_t = false)]
         strict: bool,
+        /// Breakpoint instruction pointers for debugger start (repeatable)
+        #[arg(long = "breakpoint")]
+        breakpoint: Vec<usize>,
         /// Initialize debugger panes and controls without interactive loop
         #[arg(long, default_value_t = false)]
         headless: bool,
@@ -122,8 +125,11 @@ fn run() -> Result<i32> {
             bind,
             trace,
             strict,
+            breakpoint,
             headless,
-        }) => debug_command(&file, &function, variant, bind, trace, strict, headless),
+        }) => debug_command(
+            &file, &function, variant, bind, trace, strict, breakpoint, headless,
+        ),
         None => {
             let file = args
                 .file
@@ -209,6 +215,7 @@ fn debug_command(
     bind: Vec<String>,
     trace: bool,
     strict: bool,
+    breakpoint: Vec<usize>,
     headless: bool,
 ) -> Result<i32> {
     init_tracing(trace);
@@ -220,7 +227,7 @@ fn debug_command(
     env.bindings = runtime::default_bindings_for_program(&program);
     env.bindings.extend(parse_bindings(&bind)?);
 
-    let report = runtime::debugger::run_debugger(program.asm.clone(), &env, headless)?;
+    let report = runtime::debugger::run_debugger(program.asm.clone(), &env, headless, breakpoint)?;
 
     if headless {
         println!("Debugger initialized");
@@ -231,6 +238,17 @@ fn debug_command(
         println!("Controls:");
         for control in &report.controls {
             println!("- {}", control);
+        }
+        if !report.breakpoints.is_empty() {
+            println!(
+                "Breakpoints: {}",
+                report
+                    .breakpoints
+                    .iter()
+                    .map(|v| v.to_string())
+                    .collect::<Vec<_>>()
+                    .join(",")
+            );
         }
     }
 

@@ -1,3 +1,4 @@
+use std::collections::HashSet;
 use std::time::Duration;
 
 use crossterm::event::{self, Event, KeyCode};
@@ -19,6 +20,7 @@ use crate::runtime::vm::{VMState, VmOutcome};
 pub struct DebuggerReport {
     pub panes: Vec<String>,
     pub controls: Vec<String>,
+    pub breakpoints: Vec<usize>,
     pub last_outcome: Option<VmOutcome>,
 }
 
@@ -26,6 +28,7 @@ pub fn run_debugger(
     script: Vec<String>,
     env: &ExecutionEnv,
     headless: bool,
+    initial_breakpoints: Vec<usize>,
 ) -> Result<DebuggerReport, RuntimeError> {
     let panes = vec![
         "Script".to_string(),
@@ -36,13 +39,19 @@ pub fn run_debugger(
         "Step Over (n)".to_string(),
         "Continue (c)".to_string(),
         "Reset (r)".to_string(),
+        "Toggle Breakpoint (b)".to_string(),
         "Quit (q)".to_string(),
     ];
 
+    let mut breakpoints: HashSet<usize> = initial_breakpoints.into_iter().collect();
+
     if headless {
+        let mut sorted_breakpoints: Vec<usize> = breakpoints.iter().copied().collect();
+        sorted_breakpoints.sort_unstable();
         return Ok(DebuggerReport {
             panes,
             controls,
+            breakpoints: sorted_breakpoints,
             last_outcome: None,
         });
     }
@@ -73,9 +82,15 @@ pub fn run_debugger(
     })?;
 
     let mut vm = VMState::new(script);
-    let mut logs: Vec<String> = vec!["Debugger ready. Controls: n/c/r/q".to_string()];
+    let mut logs: Vec<String> = vec![
+        "Debugger ready. Controls: n/c/r/b/q".to_string(),
+        "Use 'b' on current line to toggle breakpoint".to_string(),
+    ];
 
     loop {
+        let mut sorted_breakpoints: Vec<usize> = breakpoints.iter().copied().collect();
+        sorted_breakpoints.sort_unstable();
+
         terminal
             .draw(|frame| {
                 let root = Layout::default()
@@ -93,20 +108,37 @@ pub fn run_debugger(
                     .iter()
                     .enumerate()
                     .map(|(idx, token)| {
+                        let bp_marker = if breakpoints.contains(&idx) { "*" } else { " " };
                         if idx == vm.ip {
-                            ListItem::new(format!("> {idx:04}  {token}"))
+                            ListItem::new(format!(">{bp_marker} {idx:04}  {token}"))
                                 .style(Style::default().add_modifier(Modifier::BOLD))
                         } else {
-                            ListItem::new(format!("  {idx:04}  {token}"))
+                            ListItem::new(format!(" {bp_marker} {idx:04}  {token}"))
                         }
                     })
                     .collect();
+
+                let bp_line = if sorted_breakpoints.is_empty() {
+                    "Breakpoints: none".to_string()
+                } else {
+                    format!(
+                        "Breakpoints: {}",
+                        sorted_breakpoints
+                            .iter()
+                            .map(|v| v.to_string())
+                            .collect::<Vec<_>>()
+                            .join(",")
+                    )
+                };
 
                 let script_block = List::new(script_items).block(
                     Block::default()
                         .title("Script")
                         .borders(Borders::ALL)
-                        .title_bottom("Step Over: n  Continue: c  Reset: r  Quit: q"),
+                        .title_bottom(format!(
+                            "Step: n  Continue: c  Reset: r  Toggle BP: b  Quit: q  |  {}",
+                            bp_line
+                        )),
                 );
                 frame.render_widget(script_block, root[0]);
 
@@ -199,19 +231,30 @@ pub fn run_debugger(
                         if vm.halted {
                             logs.push("continue ignored: VM already halted".to_string());
                         } else {
-                            let run = vm.run(env);
-                            logs.push(format!("continue => {:?}", run.outcome));
+                            continue_until_breakpoint(&mut vm, env, &breakpoints, &mut logs);
                         }
                     }
                     KeyCode::Char('r') => {
                         vm.reset();
                         logs.push("vm reset".to_string());
                     }
+                    KeyCode::Char('b') => {
+                        if breakpoints.contains(&vm.ip) {
+                            breakpoints.remove(&vm.ip);
+                            logs.push(format!("removed breakpoint at ip={}", vm.ip));
+                        } else {
+                            breakpoints.insert(vm.ip);
+                            logs.push(format!("added breakpoint at ip={}", vm.ip));
+                        }
+                    }
                     _ => {}
                 }
             }
         }
     }
+
+    let mut sorted_breakpoints: Vec<usize> = breakpoints.into_iter().collect();
+    sorted_breakpoints.sort_unstable();
 
     let _ = disable_raw_mode();
     let _ = execute!(terminal.backend_mut(), LeaveAlternateScreen);
@@ -220,6 +263,50 @@ pub fn run_debugger(
     Ok(DebuggerReport {
         panes,
         controls,
+        breakpoints: sorted_breakpoints,
         last_outcome: vm.result.clone(),
     })
+}
+
+fn continue_until_breakpoint(
+    vm: &mut VMState,
+    env: &ExecutionEnv,
+    breakpoints: &HashSet<usize>,
+    logs: &mut Vec<String>,
+) {
+    if breakpoints.contains(&vm.ip) {
+        logs.push(format!("breakpoint hit at ip={}", vm.ip));
+        return;
+    }
+
+    loop {
+        if vm.halted {
+            logs.push(format!("continue => {:?}", vm.result));
+            break;
+        }
+
+        if let Err(err) = vm.step(env) {
+            vm.halted = true;
+            vm.result = Some(VmOutcome::RuntimeError(err.clone()));
+            logs.push(format!("runtime_error: {err}"));
+            break;
+        }
+
+        if let Some(last) = vm.telemetry.last() {
+            logs.push(format!(
+                "ip={} token={} status={:?} stack={:?}",
+                last.ip, last.token, last.status, last.stack_after
+            ));
+        }
+
+        if vm.halted {
+            logs.push(format!("continue => {:?}", vm.result));
+            break;
+        }
+
+        if breakpoints.contains(&vm.ip) {
+            logs.push(format!("breakpoint hit at ip={}", vm.ip));
+            break;
+        }
+    }
 }
