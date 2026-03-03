@@ -1,4 +1,6 @@
 use std::collections::HashMap;
+use std::fs;
+use std::process::Command;
 
 use arkade_compiler::compile;
 use arkade_compiler::runtime::env::stack_value_to_bytes;
@@ -57,14 +59,16 @@ fn scenario_4_binding_inference_typed_bytes_defaults_to_empty_bytes() {
     let program = arkade_compiler::runtime::load_program_from_contract(&artifact, "run", true)
         .expect("program should load");
 
-    let (bindings, warnings) =
-        arkade_compiler::runtime::default_bindings_for_program_with_diagnostics(&program);
+    let bindings = arkade_compiler::runtime::default_bindings_for_program(&program);
 
     assert_eq!(
         bindings.get("payload"),
         Some(&StackValue::Bytes(Vec::new())),
         "bytes-typed placeholder should default to empty bytes"
     );
+
+    let (_, warnings) =
+        arkade_compiler::runtime::default_bindings_for_program_with_diagnostics(&program);
     assert!(
         warnings.iter().all(|warning| !warning.contains("payload")),
         "typed placeholders should not emit unknown-placeholder warnings: {warnings:?}"
@@ -93,5 +97,48 @@ fn scenario_5_unknown_placeholder_emits_warning_diagnostics() {
             .iter()
             .any(|warning| warning.contains("unknown placeholder 'mysteryToken'")),
         "expected warning for unknown placeholder, got: {warnings:?}"
+    );
+}
+
+#[test]
+fn scenario_5_unknown_placeholder_emits_warning_to_stderr() {
+    let temp = tempfile::tempdir().expect("tempdir should be created");
+    let artifact_path = temp.path().join("warnings.json");
+    let artifact_json = serde_json::json!({
+        "contractName": "Warnings",
+        "constructorInputs": [],
+        "functions": [
+            {
+                "name": "run",
+                "functionInputs": [],
+                "serverVariant": false,
+                "require": [],
+                "asm": ["<mysteryToken>"]
+            }
+        ]
+    });
+    let serialized = serde_json::to_vec_pretty(&artifact_json).expect("artifact must serialize");
+    fs::write(&artifact_path, serialized).expect("artifact fixture should be written");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_arkadec"))
+        .arg("run")
+        .arg(&artifact_path)
+        .arg("--function")
+        .arg("run")
+        .arg("--variant")
+        .arg("false")
+        .output()
+        .expect("failed to run cli");
+
+    assert_eq!(
+        output.status.code(),
+        Some(0),
+        "expected CLI run to succeed, stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("unknown placeholder 'mysteryToken'"),
+        "expected stderr warning naming placeholder, got: {stderr}"
     );
 }

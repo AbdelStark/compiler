@@ -54,6 +54,7 @@ fn scenario_2_array_index_literal_uses_flattened_binding_and_keeps_value_accessi
 
     let mut env = ExecutionEnv::default();
     env.bindings = runtime::default_bindings_for_program(&program);
+    // Keep this width aligned with src/compiler/mod.rs DEFAULT_ARRAY_LENGTH (currently 3).
     for (index, value) in [42_i64, 0_i64, 0_i64].into_iter().enumerate() {
         env.bindings
             .insert(format!("arr_{index}"), StackValue::Int(value));
@@ -82,7 +83,7 @@ fn scenario_3_function_call_statement_is_rejected_with_source_location() {
         .expect_err("function call statements must be rejected")
         .to_string();
     assert!(
-        err.contains("line"),
+        err.contains("compile error at line ") && err.contains(", column "),
         "expected error to include source location, got: {err}"
     );
     assert!(
