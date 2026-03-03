@@ -52,10 +52,11 @@ fn run_with_context_file_cli_run_uses_fixture_tx_context_from_file() {
     let with_context_stdout = String::from_utf8_lossy(&with_context.stdout);
     let with_context_json: serde_json::Value =
         serde_json::from_str(&with_context_stdout).expect("stdout should be valid json");
-    assert_eq!(
-        with_context_json["result"]["tx_context"]["tx_hash"],
-        "abcd1234"
-    );
+    let tx_hash = with_context_json["result"]["tx_context"]["tx_hash"]
+        .as_str()
+        .expect("tx_hash should be a string");
+    assert_eq!(tx_hash, "abcd1234");
+    assert_eq!(format!("0x{tx_hash}"), "0xabcd1234");
     assert_eq!(with_context_json["result"]["outcome"], "script_true");
 
     let without_context = Command::new(env!("CARGO_BIN_EXE_arkadec"))
