@@ -1446,7 +1446,8 @@ function runRuntime() {
             fn.name,
             fn.serverVariant,
             JSON.stringify(bindings),
-            strict
+            strict,
+            ''
         );
         renderRuntimeResult(JSON.parse(runtimeJson));
         switchTab('runtime');

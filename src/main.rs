@@ -67,6 +67,18 @@ enum Command {
         trace: bool,
         #[arg(long, default_value_t = false)]
         strict: bool,
+        /// Path to a JSON fixture file supplying tx context
+        #[arg(long)]
+        context_file: Option<String>,
+        /// Inline JSON fixture payload supplying tx context
+        #[arg(long)]
+        context_json: Option<String>,
+        /// Reject context fixtures with unknown fields
+        #[arg(long, default_value_t = false)]
+        context_strict: bool,
+        /// Output format: `text` (default) or `json`
+        #[arg(long, default_value = "text")]
+        output: String,
     },
     /// Launch TUI debugger for artifact JSON
     Debug {
@@ -95,6 +107,20 @@ enum Command {
         #[arg(long, default_value_t = false)]
         headless: bool,
     },
+}
+
+#[derive(Debug)]
+struct RunCommandArgs {
+    file: String,
+    function: String,
+    variant: String,
+    bind: Vec<String>,
+    trace: bool,
+    strict: bool,
+    context_file: Option<String>,
+    context_json: Option<String>,
+    context_strict: bool,
+    output: String,
 }
 
 #[derive(Debug)]
@@ -134,7 +160,22 @@ fn run() -> Result<i32> {
             bind,
             trace,
             strict,
-        }) => run_command(&file, &function, variant, bind, trace, strict),
+            context_file,
+            context_json,
+            context_strict,
+            output,
+        }) => run_command(RunCommandArgs {
+            file,
+            function,
+            variant,
+            bind,
+            trace,
+            strict,
+            context_file,
+            context_json,
+            context_strict,
+            output,
+        }),
         Some(Command::Debug {
             file,
             function,
@@ -196,47 +237,119 @@ fn compile_command(file: &str, output: Option<String>) -> Result<i32> {
     Ok(0)
 }
 
-fn run_command(
-    file: &str,
-    function: &str,
-    variant: String,
-    bind: Vec<String>,
-    trace: bool,
-    strict: bool,
-) -> Result<i32> {
-    init_tracing(trace);
-    let variant = parse_bool_arg(&variant, "variant")?;
+#[allow(clippy::too_many_arguments)]
+fn run_command(args: RunCommandArgs) -> Result<i32> {
+    init_tracing(args.trace);
+    let variant = parse_bool_arg(&args.variant, "variant")?;
 
-    let contract = load_contract_from_path(file)?;
-    let program = runtime::load_program_from_contract(&contract, function, variant)?;
+    let contract = load_contract_from_path(&args.file)?;
+    let program = runtime::load_program_from_contract(&contract, &args.function, variant)?;
+    let tx_context = resolve_tx_context(args.context_file, args.context_json, args.context_strict)?;
     let mut env = runtime::env::ExecutionEnv {
-        strict_placeholders: strict,
+        strict_placeholders: args.strict,
         bindings: runtime::default_bindings_for_program(&program),
-        ..runtime::env::ExecutionEnv::default()
+        tx_context,
     };
-    env.bindings.extend(parse_bindings(&bind)?);
+    env.bindings.extend(parse_bindings(&args.bind)?);
 
     let result = runtime::execute_program(&program, &env);
+
+    match args.output.as_str() {
+        "text" => emit_text_output(&program, &result),
+        "json" => emit_json_output(&result)?,
+        other => anyhow::bail!("invalid --output value '{other}', expected 'text' or 'json'"),
+    }
+
+    match result.outcome {
+        runtime::vm::VmOutcome::ScriptTrue => Ok(0),
+        runtime::vm::VmOutcome::ScriptFalse => Ok(1),
+        runtime::vm::VmOutcome::RuntimeError(_) => Ok(2),
+    }
+}
+
+#[derive(serde::Serialize)]
+struct RunOutputEnvelope {
+    schema_version: u32,
+    status: String,
+    result: RunResultPayload,
+}
+
+#[derive(serde::Serialize)]
+struct RunResultPayload {
+    outcome: String,
+    error_code: Option<String>,
+    error_message: Option<String>,
+}
+
+fn resolve_tx_context(
+    context_file: Option<String>,
+    context_json: Option<String>,
+    context_strict: bool,
+) -> Result<runtime::env::TxContext> {
+    let Some(payload) = (match (context_file, context_json) {
+        (Some(path), _) => Some(
+            fs::read_to_string(&path)
+                .with_context(|| format!("failed reading context fixture '{path}'"))?,
+        ),
+        (_, Some(inline_json)) => Some(inline_json),
+        (None, None) => None,
+    }) else {
+        return Ok(runtime::env::TxContext::default());
+    };
+
+    runtime::context_fixture::parse_context_json(&payload, context_strict)
+        .map_err(|err| anyhow::anyhow!("context fixture error: {err}"))
+}
+
+fn emit_text_output(program: &runtime::LoadedProgram, result: &runtime::vm::VmRunResult) {
     println!(
         "Contract: {}  Function: {}  Variant: {}",
         program.contract_name, program.function_name, program.server_variant
     );
 
-    match result.outcome {
+    match &result.outcome {
         runtime::vm::VmOutcome::ScriptTrue => {
             println!("RESULT: true");
-            Ok(0)
         }
         runtime::vm::VmOutcome::ScriptFalse => {
             println!("RESULT: false");
-            Ok(1)
         }
         runtime::vm::VmOutcome::RuntimeError(err) => {
             println!("RESULT: runtime_error");
             println!("ERROR: {err}");
-            Ok(2)
         }
     }
+}
+
+fn emit_json_output(result: &runtime::vm::VmRunResult) -> Result<()> {
+    let (status, outcome, error_code, error_message) = match &result.outcome {
+        runtime::vm::VmOutcome::ScriptTrue => {
+            ("true".to_string(), "script_true".to_string(), None, None)
+        }
+        runtime::vm::VmOutcome::ScriptFalse => {
+            ("false".to_string(), "script_false".to_string(), None, None)
+        }
+        runtime::vm::VmOutcome::RuntimeError(err) => (
+            "error".to_string(),
+            "runtime_error".to_string(),
+            Some(format!("{:?}", err.code)),
+            Some(err.to_string()),
+        ),
+    };
+
+    let envelope = RunOutputEnvelope {
+        schema_version: 1,
+        status,
+        result: RunResultPayload {
+            outcome,
+            error_code,
+            error_message,
+        },
+    };
+
+    let payload = serde_json::to_string_pretty(&envelope)?;
+    println!("{payload}");
+    Ok(())
 }
 
 fn debug_command(args: DebugCommandArgs) -> Result<i32> {
@@ -356,6 +469,7 @@ fn init_tracing(trace: bool) {
     let _ = tracing_subscriber::fmt()
         .with_env_filter(filter)
         .with_target(false)
+        .with_writer(io::stderr)
         .try_init();
 }
 

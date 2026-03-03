@@ -1,3 +1,4 @@
+pub mod context_fixture;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod debugger;
 pub mod dispatcher;
@@ -84,6 +85,16 @@ pub fn execute_program(program: &LoadedProgram, env: &ExecutionEnv) -> VmRunResu
 }
 
 pub fn default_bindings_for_program(program: &LoadedProgram) -> HashMap<String, StackValue> {
+    let (bindings, warnings) = default_bindings_for_program_with_diagnostics(program);
+    for warning in &warnings {
+        eprintln!("{warning}");
+    }
+    bindings
+}
+
+pub fn default_bindings_for_program_with_diagnostics(
+    program: &LoadedProgram,
+) -> (HashMap<String, StackValue>, Vec<String>) {
     let mut bindings: HashMap<String, StackValue> = HashMap::new();
     let tx_context = TxContext::default();
 
@@ -169,13 +180,16 @@ pub fn default_bindings_for_program(program: &LoadedProgram) -> HashMap<String, 
         bindings.insert("hash".to_string(), StackValue::Bytes(digest.to_vec()));
     }
 
-    for value in bindings.values_mut() {
+    let mut warnings = Vec::new();
+    for (name, value) in &bindings {
         if matches!(value, StackValue::Symbol(_)) {
-            *value = StackValue::Int(0);
+            warnings.push(format!(
+                "warning: binding inference: unknown placeholder '{name}' has no declared type; leaving symbolic default"
+            ));
         }
     }
 
-    bindings
+    (bindings, warnings)
 }
 
 fn select_function<'a>(

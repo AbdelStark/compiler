@@ -199,17 +199,20 @@ pub fn execute_contract_json(
     server_variant: bool,
     bindings_json: &str,
     strict_placeholders: bool,
+    context_json: &str,
 ) -> Result<String, String> {
     let contract: crate::models::ContractJson = serde_json::from_str(contract_json)
         .map_err(|err| format!("invalid contract artifact json: {err}"))?;
     let program =
         crate::runtime::load_program_from_contract(&contract, function_name, server_variant)
             .map_err(|err| err.to_string())?;
+    let tx_context = crate::runtime::context_fixture::parse_context_json(context_json, false)
+        .map_err(|err| format!("invalid runtime context json payload: {err}"))?;
 
     let mut env = crate::runtime::env::ExecutionEnv {
         strict_placeholders,
         bindings: crate::runtime::default_bindings_for_program(&program),
-        ..crate::runtime::env::ExecutionEnv::default()
+        tx_context,
     };
     env.bindings.extend(decode_bindings_json(bindings_json)?);
 
@@ -226,6 +229,7 @@ pub fn execute_source(
     server_variant: bool,
     bindings_json: &str,
     strict_placeholders: bool,
+    context_json: &str,
 ) -> Result<String, String> {
     let contract = crate::compiler::compile(source)?;
     let contract_json =
@@ -236,5 +240,6 @@ pub fn execute_source(
         server_variant,
         bindings_json,
         strict_placeholders,
+        context_json,
     )
 }
