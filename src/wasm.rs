@@ -188,12 +188,7 @@ fn decode_bindings_json(
         .collect::<Result<HashMap<_, _>, _>>()
 }
 
-/// Execute one function path from a compiled contract JSON artifact.
-///
-/// `bindings_json` must be a JSON object with values shaped like:
-/// `{ "type": "int|bool|bytes_hex|bytes_utf8|symbol", "value": ... }`.
-#[wasm_bindgen]
-pub fn execute_contract_json(
+fn execute_contract_json_impl(
     contract_json: &str,
     function_name: &str,
     server_variant: bool,
@@ -221,9 +216,45 @@ pub fn execute_contract_json(
     serde_json::to_string_pretty(&output).map_err(|err| format!("Serialization error: {err}"))
 }
 
-/// Compile Ark source and execute one function path.
+/// Execute one function path from a compiled contract JSON artifact.
+///
+/// This convenience form uses default options:
+/// - `server_variant`: `false`
+/// - `bindings_json`: `""`
+/// - `strict_placeholders`: `false`
 #[wasm_bindgen]
-pub fn execute_source(
+pub fn execute_contract_json(
+    contract_json: &str,
+    function_name: &str,
+    context_json: &str,
+) -> Result<String, String> {
+    execute_contract_json_impl(contract_json, function_name, false, "", false, context_json)
+}
+
+/// Execute one function path from a compiled contract JSON artifact.
+///
+/// `bindings_json` must be a JSON object with values shaped like:
+/// `{ "type": "int|bool|bytes_hex|bytes_utf8|symbol", "value": ... }`.
+#[wasm_bindgen(js_name = execute_contract_json_with_options)]
+pub fn execute_contract_json_with_options(
+    contract_json: &str,
+    function_name: &str,
+    server_variant: bool,
+    bindings_json: &str,
+    strict_placeholders: bool,
+    context_json: &str,
+) -> Result<String, String> {
+    execute_contract_json_impl(
+        contract_json,
+        function_name,
+        server_variant,
+        bindings_json,
+        strict_placeholders,
+        context_json,
+    )
+}
+
+fn execute_source_impl(
     source: &str,
     function_name: &str,
     server_variant: bool,
@@ -234,8 +265,43 @@ pub fn execute_source(
     let contract = crate::compiler::compile(source)?;
     let contract_json =
         serde_json::to_string(&contract).map_err(|err| format!("Serialization error: {err}"))?;
-    execute_contract_json(
+    execute_contract_json_impl(
         &contract_json,
+        function_name,
+        server_variant,
+        bindings_json,
+        strict_placeholders,
+        context_json,
+    )
+}
+
+/// Compile Ark source and execute one function path.
+///
+/// This convenience form uses default options:
+/// - `server_variant`: `false`
+/// - `bindings_json`: `""`
+/// - `strict_placeholders`: `false`
+#[wasm_bindgen]
+pub fn execute_source(
+    source: &str,
+    function_name: &str,
+    context_json: &str,
+) -> Result<String, String> {
+    execute_source_impl(source, function_name, false, "", false, context_json)
+}
+
+/// Compile Ark source and execute one function path with explicit options.
+#[wasm_bindgen(js_name = execute_source_with_options)]
+pub fn execute_source_with_options(
+    source: &str,
+    function_name: &str,
+    server_variant: bool,
+    bindings_json: &str,
+    strict_placeholders: bool,
+    context_json: &str,
+) -> Result<String, String> {
+    execute_source_impl(
+        source,
         function_name,
         server_variant,
         bindings_json,

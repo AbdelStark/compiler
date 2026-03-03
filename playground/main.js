@@ -1436,19 +1436,24 @@ function runRuntime() {
         const fn = selectedRuntimeFunction();
         const strict = document.getElementById('runtime-strict').checked;
         const bindings = parseRuntimeBindings();
-        if (typeof wasmApi.execute_contract_json !== 'function') {
+        const executeRuntime =
+            wasmApi.execute_contract_json_with_options || wasmApi.execute_contract_json;
+        if (typeof executeRuntime !== 'function') {
             throw new Error(
                 'WASM package does not expose runtime API yet. Run ./playground/build.sh and reload.'
             );
         }
-        const runtimeJson = wasmApi.execute_contract_json(
-            lastCompiledArtifactJson,
-            fn.name,
-            fn.serverVariant,
-            JSON.stringify(bindings),
-            strict,
-            ''
-        );
+        const runtimeJson =
+            executeRuntime.length >= 6
+                ? executeRuntime(
+                    lastCompiledArtifactJson,
+                    fn.name,
+                    fn.serverVariant,
+                    JSON.stringify(bindings),
+                    strict,
+                    ''
+                )
+                : executeRuntime(lastCompiledArtifactJson, fn.name, '');
         renderRuntimeResult(JSON.parse(runtimeJson));
         switchTab('runtime');
     } catch (err) {

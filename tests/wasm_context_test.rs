@@ -22,15 +22,9 @@ fn wasm_context_json_propagated_execute_contract_json_uses_context_txid() {
   }
 }"#;
 
-    let runtime_json = arkade_compiler::wasm::execute_contract_json(
-        contract_json,
-        "claim",
-        false,
-        "",
-        false,
-        context_json,
-    )
-    .expect("execute_contract_json should return success");
+    let runtime_json =
+        arkade_compiler::wasm::execute_contract_json(contract_json, "claim", context_json)
+            .expect("execute_contract_json should return success");
 
     let payload: serde_json::Value =
         serde_json::from_str(&runtime_json).expect("WASM runtime output should be valid json");
