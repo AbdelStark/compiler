@@ -23,8 +23,10 @@ fn unknown_opcode_is_runtime_error() {
 
 #[test]
 fn missing_placeholder_in_strict_mode_is_runtime_error() {
-    let mut env = ExecutionEnv::default();
-    env.strict_placeholders = true;
+    let env = ExecutionEnv {
+        strict_placeholders: true,
+        ..ExecutionEnv::default()
+    };
 
     let script = vec!["<missing>".to_string()];
     let mut vm = VMState::new(script);

@@ -62,6 +62,7 @@ pub enum ValueSpec {
     },
 }
 
+#[allow(dead_code)]
 pub fn load_vectors() -> Vec<ParityVector> {
     load_vectors_from_rel_dir("tests/parity_vectors")
 }

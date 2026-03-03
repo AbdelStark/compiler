@@ -31,10 +31,7 @@ use chrono::Utc;
 
 /// Check if a function uses any introspection opcodes
 fn function_uses_introspection(function: &Function) -> bool {
-    function
-        .statements
-        .iter()
-        .any(|s| statement_uses_introspection(s))
+    function.statements.iter().any(statement_uses_introspection)
 }
 
 /// Check if a statement uses introspection
@@ -47,14 +44,13 @@ fn statement_uses_introspection(stmt: &Statement) -> bool {
             else_body,
         } => {
             expression_uses_introspection(condition)
-                || then_body.iter().any(|s| statement_uses_introspection(s))
+                || then_body.iter().any(statement_uses_introspection)
                 || else_body
                     .as_ref()
-                    .map_or(false, |b| b.iter().any(|s| statement_uses_introspection(s)))
+                    .is_some_and(|b| b.iter().any(statement_uses_introspection))
         }
         Statement::ForIn { iterable, body, .. } => {
-            expression_uses_introspection(iterable)
-                || body.iter().any(|s| statement_uses_introspection(s))
+            expression_uses_introspection(iterable) || body.iter().any(statement_uses_introspection)
         }
         Statement::LetBinding { value, .. } | Statement::VarAssign { value, .. } => {
             expression_uses_introspection(value)
@@ -276,12 +272,9 @@ fn collect_asset_ids_from_statement(stmt: &Statement, ids: &mut Vec<String>) {
 }
 
 fn collect_asset_ids_from_requirement(req: &Requirement, ids: &mut Vec<String>) {
-    match req {
-        Requirement::Comparison { left, op: _, right } => {
-            collect_asset_ids_from_expression(left, ids);
-            collect_asset_ids_from_expression(right, ids);
-        }
-        _ => {}
+    if let Requirement::Comparison { left, op: _, right } = req {
+        collect_asset_ids_from_expression(left, ids);
+        collect_asset_ids_from_expression(right, ids);
     }
 }
 

@@ -58,8 +58,10 @@ fn execute_contract_all_functions(contract: &ContractJson, label: &str) -> Vec<S
             }
         };
 
-        let mut env = ExecutionEnv::default();
-        env.bindings = arkade_compiler::runtime::default_bindings_for_program(&program);
+        let env = ExecutionEnv {
+            bindings: arkade_compiler::runtime::default_bindings_for_program(&program),
+            ..ExecutionEnv::default()
+        };
 
         let result = arkade_compiler::runtime::execute_program(&program, &env);
         if let VmOutcome::RuntimeError(err) = result.outcome {
@@ -201,8 +203,10 @@ fn execute_all_top_level_ark_examples_via_temp_json_artifacts_without_runtime_er
                 }
             };
 
-            let mut env = ExecutionEnv::default();
-            env.bindings = arkade_compiler::runtime::default_bindings_for_program(&program);
+            let env = ExecutionEnv {
+                bindings: arkade_compiler::runtime::default_bindings_for_program(&program),
+                ..ExecutionEnv::default()
+            };
 
             let result = arkade_compiler::runtime::execute_program(&program, &env);
             if let VmOutcome::RuntimeError(err) = result.outcome {

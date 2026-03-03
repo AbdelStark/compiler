@@ -4,14 +4,9 @@ use std::io::{self, Write};
 use std::path::Path;
 
 use anyhow::{Context, Result};
+use arkade_compiler::{compiler, models, runtime};
 use clap::{Parser as ClapParser, Subcommand};
 use tracing_subscriber::EnvFilter;
-
-mod compiler;
-mod models;
-mod opcodes;
-mod parser;
-mod runtime;
 
 /// Arkade Compiler CLI
 ///
@@ -102,6 +97,20 @@ enum Command {
     },
 }
 
+#[derive(Debug)]
+struct DebugCommandArgs {
+    file: Option<String>,
+    function: Option<String>,
+    variant: Option<String>,
+    bind: Vec<String>,
+    trace: bool,
+    strict: bool,
+    breakpoint: Vec<usize>,
+    list_samples: bool,
+    pick: bool,
+    headless: bool,
+}
+
 fn main() {
     let exit_code = match run() {
         Ok(code) => code,
@@ -137,7 +146,7 @@ fn run() -> Result<i32> {
             list_samples,
             pick,
             headless,
-        }) => debug_command(
+        }) => debug_command(DebugCommandArgs {
             file,
             function,
             variant,
@@ -148,7 +157,7 @@ fn run() -> Result<i32> {
             list_samples,
             pick,
             headless,
-        ),
+        }),
         None => {
             let file = args
                 .file
@@ -200,9 +209,11 @@ fn run_command(
 
     let contract = load_contract_from_path(file)?;
     let program = runtime::load_program_from_contract(&contract, function, variant)?;
-    let mut env = runtime::env::ExecutionEnv::default();
-    env.strict_placeholders = strict;
-    env.bindings = runtime::default_bindings_for_program(&program);
+    let mut env = runtime::env::ExecutionEnv {
+        strict_placeholders: strict,
+        bindings: runtime::default_bindings_for_program(&program),
+        ..runtime::env::ExecutionEnv::default()
+    };
     env.bindings.extend(parse_bindings(&bind)?);
 
     let result = runtime::execute_program(&program, &env);
@@ -228,22 +239,11 @@ fn run_command(
     }
 }
 
-fn debug_command(
-    file: Option<String>,
-    function: Option<String>,
-    variant: Option<String>,
-    bind: Vec<String>,
-    trace: bool,
-    strict: bool,
-    breakpoint: Vec<usize>,
-    list_samples: bool,
-    pick: bool,
-    headless: bool,
-) -> Result<i32> {
-    init_tracing(trace);
+fn debug_command(args: DebugCommandArgs) -> Result<i32> {
+    init_tracing(args.trace);
     let samples = discover_sample_contracts()?;
 
-    if list_samples {
+    if args.list_samples {
         if samples.is_empty() {
             println!("No sample contracts found in examples/");
         } else {
@@ -255,19 +255,19 @@ fn debug_command(
         return Ok(0);
     }
 
-    let interactive = pick || file.is_none() || function.is_none();
+    let interactive = args.pick || args.file.is_none() || args.function.is_none();
 
     let source_path = if interactive {
         pick_source_interactive(&samples)?
     } else {
-        file.expect("checked above")
+        args.file.expect("checked above")
     };
     let contract = load_contract_from_path(&source_path)?;
     let (function, variant) = if interactive {
         pick_function_variant_interactive(&contract)?
     } else {
-        let function = function.expect("checked above");
-        let variant = match variant {
+        let function = args.function.expect("checked above");
+        let variant = match args.variant {
             Some(v) => parse_bool_arg(&v, "variant")?,
             None => false,
         };
@@ -275,19 +275,22 @@ fn debug_command(
     };
 
     let program = runtime::load_program_from_contract(&contract, &function, variant)?;
-    let mut env = runtime::env::ExecutionEnv::default();
-    env.strict_placeholders = strict;
-    env.bindings = runtime::default_bindings_for_program(&program);
-    env.bindings.extend(parse_bindings(&bind)?);
+    let mut env = runtime::env::ExecutionEnv {
+        strict_placeholders: args.strict,
+        bindings: runtime::default_bindings_for_program(&program),
+        ..runtime::env::ExecutionEnv::default()
+    };
+    env.bindings.extend(parse_bindings(&args.bind)?);
 
     println!(
         "Debug source: {}  Contract: {}  Function: {}  Variant: {}",
         source_path, program.contract_name, program.function_name, program.server_variant
     );
 
-    let report = runtime::debugger::run_debugger(program.asm.clone(), &env, headless, breakpoint)?;
+    let report =
+        runtime::debugger::run_debugger(program.asm.clone(), &env, args.headless, args.breakpoint)?;
 
-    if headless {
+    if args.headless {
         println!("Debugger initialized");
         println!("Panes:");
         for pane in &report.panes {

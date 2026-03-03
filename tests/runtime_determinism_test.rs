@@ -30,12 +30,16 @@ fn example_matrix_is_deterministic_and_runtime_safe() {
             )
             .expect("program should load");
 
-            let mut env1 = ExecutionEnv::default();
-            env1.bindings = arkade_compiler::runtime::default_bindings_for_program(&program);
+            let env1 = ExecutionEnv {
+                bindings: arkade_compiler::runtime::default_bindings_for_program(&program),
+                ..ExecutionEnv::default()
+            };
             let run1 = arkade_compiler::runtime::execute_program(&program, &env1);
 
-            let mut env2 = ExecutionEnv::default();
-            env2.bindings = arkade_compiler::runtime::default_bindings_for_program(&program);
+            let env2 = ExecutionEnv {
+                bindings: arkade_compiler::runtime::default_bindings_for_program(&program),
+                ..ExecutionEnv::default()
+            };
             let run2 = arkade_compiler::runtime::execute_program(&program, &env2);
 
             if let VmOutcome::RuntimeError(err) = &run1.outcome {

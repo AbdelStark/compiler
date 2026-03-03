@@ -7,8 +7,10 @@ fn execute_htlc_claim_exit_variant() {
         arkade_compiler::runtime::load_program_from_file("examples/htlc.json", "claim", false)
             .expect("program should load");
 
-    let mut env = ExecutionEnv::default();
-    env.bindings = arkade_compiler::runtime::default_bindings_for_program(&program);
+    let env = ExecutionEnv {
+        bindings: arkade_compiler::runtime::default_bindings_for_program(&program),
+        ..ExecutionEnv::default()
+    };
 
     let result = arkade_compiler::runtime::execute_program(&program, &env);
     assert_eq!(result.outcome, VmOutcome::ScriptTrue);

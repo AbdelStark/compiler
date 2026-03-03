@@ -45,12 +45,8 @@ impl StackValue {
             Self::Symbol(v) => {
                 if v.eq_ignore_ascii_case("true") {
                     Ok(true)
-                } else if v.eq_ignore_ascii_case("false") {
-                    Ok(false)
-                } else if v.is_empty() {
-                    Ok(false)
                 } else {
-                    Ok(true)
+                    Ok(!v.eq_ignore_ascii_case("false") && !v.is_empty())
                 }
             }
         }

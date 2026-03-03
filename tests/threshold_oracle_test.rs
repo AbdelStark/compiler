@@ -105,7 +105,7 @@ fn test_threshold_oracle_has_control_flow() {
     // Should have if/else for counting valid signatures
     // (or at least some form of control flow from the for loop)
     // For now, just verify the function compiles and has the basic structure
-    assert!(server.asm.len() > 0, "Assembly should not be empty");
+    assert!(!server.asm.is_empty(), "Assembly should not be empty");
 }
 
 // ─── Commit 6: Array ABI Flattening Tests ──────────────────────────────────────

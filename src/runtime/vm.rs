@@ -257,7 +257,9 @@ impl VMState {
             return Ok(StackValue::Int(v));
         }
 
-        if token.len() % 2 == 0 && !token.is_empty() && token.chars().all(|c| c.is_ascii_hexdigit())
+        if token.len().is_multiple_of(2)
+            && !token.is_empty()
+            && token.chars().all(|c| c.is_ascii_hexdigit())
         {
             let bytes = hex::decode(token).map_err(|err| {
                 RuntimeError::new(

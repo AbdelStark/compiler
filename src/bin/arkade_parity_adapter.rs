@@ -25,9 +25,11 @@ fn run() -> Result<()> {
     let input: ExternalParityInput = serde_json::from_str(&raw)
         .with_context(|| format!("failed parsing parity input '{input_path}'"))?;
 
-    let mut env = ExecutionEnv::default();
-    env.strict_placeholders = input.strict_placeholders;
-    env.bindings = decode_bindings(input.bindings)?;
+    let env = ExecutionEnv {
+        strict_placeholders: input.strict_placeholders,
+        bindings: decode_bindings(input.bindings)?,
+        ..ExecutionEnv::default()
+    };
 
     let mut vm = VMState::new(input.asm);
     let run = vm.run(&env);

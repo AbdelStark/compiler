@@ -4,7 +4,6 @@ use serde::{Deserialize, Serialize};
 ///
 /// These structures are used to represent the compiled contract in a format
 /// that can be serialized to JSON.
-
 /// Parameter in a contract or function
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct Parameter {
@@ -80,7 +79,6 @@ pub struct CompilerInfo {
 ///
 /// These structures represent the parsed abstract syntax tree (AST)
 /// of an Arkade Script contract.
-
 /// Contract AST
 #[derive(Debug, Clone)]
 pub struct Contract {

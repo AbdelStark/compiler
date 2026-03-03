@@ -30,8 +30,10 @@ fn execute_all_example_functions_without_runtime_errors() {
             )
             .expect("program should load");
 
-            let mut env = ExecutionEnv::default();
-            env.bindings = arkade_compiler::runtime::default_bindings_for_program(&program);
+            let env = ExecutionEnv {
+                bindings: arkade_compiler::runtime::default_bindings_for_program(&program),
+                ..ExecutionEnv::default()
+            };
 
             let result = arkade_compiler::runtime::execute_program(&program, &env);
             if let VmOutcome::RuntimeError(err) = result.outcome {
