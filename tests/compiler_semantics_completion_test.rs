@@ -54,8 +54,10 @@ fn scenario_2_array_index_literal_uses_flattened_binding_and_keeps_value_accessi
 
     let mut env = ExecutionEnv::default();
     env.bindings = runtime::default_bindings_for_program(&program);
-    env.bindings
-        .insert("arr_0".to_string(), StackValue::Int(42));
+    for (index, value) in [42_i64, 0_i64, 0_i64].into_iter().enumerate() {
+        env.bindings
+            .insert(format!("arr_{index}"), StackValue::Int(value));
+    }
 
     let result = runtime::execute_program(&program, &env);
     assert_eq!(result.outcome, VmOutcome::ScriptTrue);
