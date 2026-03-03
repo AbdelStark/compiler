@@ -47,35 +47,36 @@ type externalResult struct {
 	Telemetry      []any          `json:"telemetry"`
 }
 
+func runtimeErrorResult(code string) externalResult {
+	return externalResult{
+		Kind:           "runtime_error",
+		ErrorCode:      &code,
+		FinalMainStack: []wireValueOut{},
+		FinalAltStack:  []wireValueOut{},
+		Telemetry:      []any{},
+	}
+}
+
 func main() {
 	args := os.Args[1:]
 	if len(args) > 0 && args[0] == "--" {
 		args = args[1:]
 	}
 	if len(args) != 1 {
-		writeJSON(externalResult{
-			Kind:      "runtime_error",
-			ErrorCode: strPtr("Usage"),
-		})
+		writeJSON(runtimeErrorResult("Usage"))
 		os.Exit(2)
 	}
 
 	input, err := readInput(args[0])
 	if err != nil {
-		writeJSON(externalResult{
-			Kind:      "runtime_error",
-			ErrorCode: strPtr("Json"),
-		})
+		writeJSON(runtimeErrorResult("Json"))
 		os.Exit(2)
 	}
 
 	script, err := compileScript(input)
 	if err != nil {
 		code := classifyBuildError(err)
-		writeJSON(externalResult{
-			Kind:      "runtime_error",
-			ErrorCode: &code,
-		})
+		writeJSON(runtimeErrorResult(code))
 		return
 	}
 
@@ -91,10 +92,7 @@ func main() {
 	)
 	if err != nil {
 		code := classifyRuntimeError(err)
-		writeJSON(externalResult{
-			Kind:      "runtime_error",
-			ErrorCode: &code,
-		})
+		writeJSON(runtimeErrorResult(code))
 		return
 	}
 	engine.SetAssetPacket(sampleAssetPacket())
@@ -124,13 +122,10 @@ func main() {
 	}
 
 	code := classifyRuntimeError(execErr)
-	writeJSON(externalResult{
-		Kind:           "runtime_error",
-		ErrorCode:      &code,
-		FinalMainStack: mainStack,
-		FinalAltStack:  altStack,
-		Telemetry:      []any{},
-	})
+	out := runtimeErrorResult(code)
+	out.FinalMainStack = mainStack
+	out.FinalAltStack = altStack
+	writeJSON(out)
 }
 
 func readInput(path string) (externalInput, error) {
@@ -290,6 +285,19 @@ func appendOpcode(builder *txscript.ScriptBuilder, op string) error {
 		builder.AddOp(arkade.OP_NOT)
 	case "OP_GREATERTHAN":
 		builder.AddOp(arkade.OP_GREATERTHAN)
+	case "OP_CHECKSIG":
+		builder.AddOp(arkade.OP_CHECKSIG)
+	case "OP_CHECKSIGVERIFY":
+		builder.AddOp(arkade.OP_CHECKSIGVERIFY)
+	case "OP_CHECKSIGFROMSTACK":
+		builder.AddOp(arkade.OP_CHECKSIGFROMSTACK)
+	case "OP_CHECKSIGFROMSTACKVERIFY":
+		builder.AddOp(arkade.OP_CHECKSIGFROMSTACK)
+		builder.AddOp(arkade.OP_VERIFY)
+	case "OP_CHECKMULTISIG":
+		builder.AddOp(arkade.OP_CHECKMULTISIG)
+	case "OP_CHECKMULTISIGVERIFY":
+		builder.AddOp(arkade.OP_CHECKMULTISIGVERIFY)
 	case "OP_SHA256INITIALIZE":
 		builder.AddOp(arkade.OP_SHA256INITIALIZE)
 	case "OP_SHA256":
@@ -302,6 +310,10 @@ func appendOpcode(builder *txscript.ScriptBuilder, op string) error {
 		builder.AddOp(arkade.OP_INSPECTASSETGROUPASSETID)
 	case "OP_FINDASSETGROUPBYASSETID":
 		builder.AddOp(arkade.OP_FINDASSETGROUPBYASSETID)
+	case "OP_INSPECTOUTASSETLOOKUP":
+		builder.AddOp(arkade.OP_INSPECTOUTASSETLOOKUP)
+	case "OP_INSPECTOUTASSETAT":
+		builder.AddOp(arkade.OP_INSPECTOUTASSETAT)
 	default:
 		return fmt.Errorf("%w: %s", errUnknownOpcode, op)
 	}
@@ -414,7 +426,8 @@ func classifyBuildError(err error) string {
 		return "MissingBinding"
 	default:
 		msg := strings.ToLower(err.Error())
-		if strings.Contains(msg, "unbalanced conditional") {
+		if strings.Contains(msg, "unbalanced conditional") ||
+			(strings.Contains(msg, "without matching op_endif")) {
 			return "UnbalancedConditional"
 		}
 		return "ExternalBuildError"
@@ -424,10 +437,20 @@ func classifyBuildError(err error) string {
 func classifyRuntimeError(err error) string {
 	msg := strings.ToLower(err.Error())
 	switch {
-	case strings.Contains(msg, "unbalanced conditional"):
+	case strings.Contains(msg, "unbalanced conditional"),
+		strings.Contains(msg, "without matching op_endif"),
+		(strings.Contains(msg, "mismatched") && strings.Contains(msg, "endif")):
 		return "UnbalancedConditional"
 	case strings.Contains(msg, "invalid stack operation"):
 		return "StackUnderflow"
+	case strings.Contains(msg, "verify failed"),
+		strings.Contains(msg, "false stack entry"),
+		strings.Contains(msg, "equalverify"),
+		strings.Contains(msg, "numequalverify"),
+		strings.Contains(msg, "checksigverify"),
+		strings.Contains(msg, "checkmultisigverify"),
+		strings.Contains(msg, "nullfail"):
+		return "ScriptVerifyFailed"
 	default:
 		return "ExternalRuntimeError"
 	}
@@ -455,10 +478,6 @@ func isEvenHex(s string) bool {
 		}
 	}
 	return true
-}
-
-func strPtr(v string) *string {
-	return &v
 }
 
 func writeJSON(v any) {

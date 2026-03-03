@@ -135,3 +135,28 @@ cargo test --test runtime_external_introspector_parity_test -- --nocapture
 Current scope:
 - The introspector bridge uses `tests/parity_vectors_introspector/*.json`.
 - Validation compares `kind` parity (`script_true` / `script_false` / `runtime_error`) between local runtime and introspector engine.
+
+## Full-corpus introspector delta matrix
+
+A second gate runs the full parity corpus (`tests/parity_vectors/*.json`) in kind-only mode against the introspector adapter and records expected deltas:
+
+- Test: `tests/runtime_external_introspector_delta_matrix_test.rs`
+
+Run:
+
+```bash
+ARKADE_ENABLE_INTROSPECTOR_PARITY=1 \
+cargo test --test runtime_external_introspector_delta_matrix_test -- --nocapture
+```
+
+Current known deltas:
+- `checksig_verify_success`
+- `checksigfromstack_verify_success`
+- `checkmultisig_success`
+- `streaming_sha_chain`
+- `introspection_txhash_equal`
+- `asset_lookup_roundtrip`
+
+Interpretation:
+- These are semantic differences between current in-process runtime behavior and current introspector engine behavior.
+- The matrix gate fails if this set changes unexpectedly (regression or improvement), forcing explicit reconciliation in code/tests/docs.
