@@ -1,0 +1,108 @@
+{
+  "contractName": "StarkVerifier",
+  "constructorInputs": [
+    {
+      "name": "owner",
+      "type": "pubkey"
+    }
+  ],
+  "functions": [
+    {
+      "name": "unlock",
+      "functionInputs": [
+        {
+          "name": "ownerSig",
+          "type": "signature"
+        },
+        {
+          "name": "proof",
+          "type": "bytes"
+        },
+        {
+          "name": "publicInputs",
+          "type": "bytes"
+        },
+        {
+          "name": "verificationKey",
+          "type": "bytes"
+        }
+      ],
+      "serverVariant": true,
+      "require": [
+        {
+          "type": "signature"
+        },
+        {
+          "type": "starkVerify"
+        },
+        {
+          "type": "serverSignature"
+        }
+      ],
+      "asm": [
+        "<owner>",
+        "<ownerSig>",
+        "OP_CHECKSIG",
+        "<proof>",
+        "<publicInputs>",
+        "<verificationKey>",
+        "OP_STARK_VERIFY",
+        "<SERVER_KEY>",
+        "<serverSig>",
+        "OP_CHECKSIG"
+      ]
+    },
+    {
+      "name": "unlock",
+      "functionInputs": [
+        {
+          "name": "ownerSig",
+          "type": "signature"
+        },
+        {
+          "name": "proof",
+          "type": "bytes"
+        },
+        {
+          "name": "publicInputs",
+          "type": "bytes"
+        },
+        {
+          "name": "verificationKey",
+          "type": "bytes"
+        }
+      ],
+      "serverVariant": false,
+      "require": [
+        {
+          "type": "signature"
+        },
+        {
+          "type": "starkVerify"
+        },
+        {
+          "type": "older",
+          "message": "Exit timelock of 144 blocks"
+        }
+      ],
+      "asm": [
+        "<owner>",
+        "<ownerSig>",
+        "OP_CHECKSIG",
+        "<proof>",
+        "<publicInputs>",
+        "<verificationKey>",
+        "OP_STARK_VERIFY",
+        "144",
+        "OP_CHECKSEQUENCEVERIFY",
+        "OP_DROP"
+      ]
+    }
+  ],
+  "source": "options {\n  server = server;\n  exit = 144;\n}\n\ncontract StarkVerifier(pubkey owner) {\n  function unlock(signature ownerSig, bytes proof, bytes publicInputs, bytes verificationKey) {\n    require(checkSig(ownerSig, owner));\n    require(verifyStarkProof(proof, publicInputs, verificationKey));\n  }\n}",
+  "compiler": {
+    "name": "arkade-compiler",
+    "version": "0.1.0"
+  },
+  "updatedAt": "2026-03-02T17:35:09.199279+00:00"
+}
