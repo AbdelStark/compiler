@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use secp256k1::ecdsa::Signature as EcdsaSignature;
 use secp256k1::schnorr::Signature as SchnorrSignature;
-use secp256k1::{Message, PublicKey, Secp256k1, SecretKey, XOnlyPublicKey};
+use secp256k1::{Message, PublicKey, Secp256k1, SecretKey};
 use sha2::{Digest, Sha256};
 
 use crate::runtime::error::{RuntimeError, RuntimeErrorCode};
@@ -232,11 +232,14 @@ impl ExecutionEnv {
         }
 
         if sig_bytes.len() == 64 {
-            if let Ok(schnorr_sig) = SchnorrSignature::from_slice(&sig_bytes) {
-                let (xonly, _) = parsed_pubkey.x_only_public_key();
-                if secp.verify_schnorr(&schnorr_sig, &digest, &xonly).is_ok() {
-                    return true;
-                }
+            let sig_arr: [u8; 64] = sig_bytes
+                .as_slice()
+                .try_into()
+                .expect("checked schnorr signature length");
+            let schnorr_sig = SchnorrSignature::from_byte_array(sig_arr);
+            let (xonly, _) = parsed_pubkey.x_only_public_key();
+            if secp.verify_schnorr(&schnorr_sig, &digest, &xonly).is_ok() {
+                return true;
             }
         }
 
@@ -256,13 +259,13 @@ impl ExecutionEnv {
 
     pub fn derive_keypair_for_label(label: &str) -> (SecretKey, PublicKey) {
         let secp = Secp256k1::signing_only();
-        let mut seed = Sha256::digest(label.as_bytes()).to_vec();
+        let mut seed: [u8; 32] = Sha256::digest(label.as_bytes()).into();
         loop {
-            if let Ok(secret) = SecretKey::from_slice(&seed) {
+            if let Ok(secret) = SecretKey::from_byte_array(seed) {
                 let public = PublicKey::from_secret_key(&secp, &secret);
                 return (secret, public);
             }
-            seed = Sha256::digest(&seed).to_vec();
+            seed = Sha256::digest(seed).into();
         }
     }
 
@@ -272,11 +275,6 @@ impl ExecutionEnv {
         let digest = Sha256::digest(message);
         let msg = Message::from_digest(digest.into());
         secp.sign_ecdsa(msg, &secret).serialize_der().to_vec()
-    }
-
-    pub fn xonly_pubkey_for_label(label: &str) -> XOnlyPublicKey {
-        let (_secret, pubkey) = Self::derive_keypair_for_label(label);
-        pubkey.x_only_public_key().0
     }
 
     fn signature_message(&self, message: Option<&StackValue>) -> Vec<u8> {

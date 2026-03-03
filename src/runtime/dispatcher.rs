@@ -1,7 +1,7 @@
 use secp256k1::{PublicKey, Scalar, Secp256k1};
 use sha2::{Digest, Sha256};
 
-use crate::runtime::env::{stack_value_to_bytes, AssetEntry, ExecutionEnv, TxInput, TxOutput};
+use crate::runtime::env::{stack_value_to_bytes, AssetEntry, ExecutionEnv};
 use crate::runtime::error::{RuntimeError, RuntimeErrorCode};
 use crate::runtime::value::StackValue;
 use crate::runtime::vm::VMState;

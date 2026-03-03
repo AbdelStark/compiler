@@ -1,7 +1,7 @@
 use arkade_compiler::runtime::env::ExecutionEnv;
 use arkade_compiler::runtime::value::StackValue;
 use arkade_compiler::runtime::vm::{VMState, VmOutcome};
-use secp256k1::{PublicKey, Scalar, Secp256k1};
+use secp256k1::{Scalar, Secp256k1};
 use sha2::{Digest, Sha256};
 
 #[test]

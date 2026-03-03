@@ -222,32 +222,6 @@ fn is_probable_pubkey(name: &str) -> bool {
         || lower == "server"
 }
 
-fn is_signature_label(name: &str) -> bool {
-    let lower = name.to_ascii_lowercase();
-    lower.ends_with("sig") || lower.ends_with("signature")
-}
-
-fn strip_signature_suffix(name: &str) -> String {
-    if name.eq_ignore_ascii_case("serverSig") {
-        return "SERVER_KEY".to_string();
-    }
-
-    if let Some(stripped) = name.strip_suffix("Sig") {
-        return stripped.to_string();
-    }
-    if let Some(stripped) = name.strip_suffix("sig") {
-        return stripped.to_string();
-    }
-    if let Some(stripped) = name.strip_suffix("Signature") {
-        return stripped.to_string();
-    }
-    if let Some(stripped) = name.strip_suffix("signature") {
-        return stripped.to_string();
-    }
-
-    name.to_string()
-}
-
 fn ensure_pubkey_binding(label: &str, bindings: &mut HashMap<String, StackValue>) {
     if matches!(bindings.get(label), Some(StackValue::Bytes(v)) if v.len() == 33 || v.len() == 65) {
         return;

@@ -25,24 +25,32 @@ This board maps to the required tags above by execution phase:
 - `[COMPLETED]` R4: Add `OpcodeDispatcher` in `src/runtime/dispatcher.rs` and wire stack opcodes.
 - `[COMPLETED]` R5: Add arithmetic tests (`tests/runtime_arithmetic_test.rs`) for `OP_ADD64`, `OP_SUB64`, `OP_MUL64`, `OP_DIV64`.
 - `[COMPLETED]` R6: Implement arithmetic/comparison handlers and numeric decoding safety.
-- `[COMPLETED]` R7: Add crypto tests (`tests/runtime_crypto_test.rs`) for `OP_SHA256`, `OP_EQUALVERIFY`, `OP_CHECKSIG` (mocked).
-- `[COMPLETED]` R8: Implement crypto handlers and checksig provider trait in `src/runtime/env.rs`.
+- `[COMPLETED]` R7: Add crypto runtime tests (`tests/runtime_crypto_test.rs`) for real `OP_CHECKSIG`, `OP_CHECKSIGFROMSTACK`, and failure paths.
+- `[COMPLETED]` R8: Implement real secp256k1 crypto verification (no mock checksig path) in `src/runtime/env.rs`.
 - `[COMPLETED]` R9: Add artifact integration tests for `examples/htlc.json` runtime execution path.
 - `[COMPLETED]` R10: Implement artifact loader + function/variant selector for runtime execution.
 - `[COMPLETED]` R11: Extend CLI with `compile`, `run`, and `debug` subcommands in `src/main.rs` (with legacy compile mode compatibility).
 - `[COMPLETED]` R12: Add telemetry instrumentation (`tracing`) with per-opcode stack snapshots.
 - `[COMPLETED]` R13: Build TUI debugger scaffold with `ratatui`/`crossterm` panes and controls.
-- `[COMPLETED]` R14: Add unsupported opcode handling matrix for remaining opcodes used in examples.
-- `[COMPLETED]` R15: Final validation gates (`cargo test`, `cargo fmt --check`).
+- `[COMPLETED]` R14: Implement full opcode surface from `src/opcodes/mod.rs`, including introspection/group/asset opcodes and conversion/EC operations.
+- `[COMPLETED]` R15: Final validation gates (`cargo test`, `cargo fmt --check`) plus runtime-specific matrix suites.
+- `[COMPLETED]` R16: Add high-coverage runtime suites:
+  - `tests/runtime_extended_opcodes_test.rs`
+  - `tests/runtime_introspection_test.rs`
+  - `tests/runtime_examples_e2e_test.rs`
+  - `tests/runtime_cli_matrix_test.rs`
+  - `tests/runtime_cli_run_test.rs` trace coverage
 
 ## Active Focus
 Current target: closed.
-Next transition: runtime milestone accepted and ready for incremental opcode expansion.
+Next transition: runtime phase-1 feature set complete and validated; proceed to semantic parity hardening and debugger UX depth.
 
 ## Open Risks
-- Signature verification remains mocked in first cut; real cryptographic semantics are deferred.
-- Some introspection opcodes may stay unsupported initially and must return explicit runtime errors.
+- Introspection and streaming-hash semantics are implemented concretely for in-process runtime context, but not yet parity-audited against external `arkd`/`introspector` edge behavior for every corner case.
+- Debugger currently supports step/continue/reset and panes; breakpoints and richer inspection tooling are pending.
 
 ## Validation Log
 - `[COMPLETED]` `cargo fmt --check` passed.
 - `[COMPLETED]` `cargo test` passed (including new runtime and CLI tests).
+- `[COMPLETED]` `cargo test --test runtime_crypto_test --test runtime_extended_opcodes_test --test runtime_introspection_test --test runtime_examples_e2e_test` passed.
+- `[COMPLETED]` `cargo test --test runtime_cli_run_test --test runtime_cli_debug_boot_test --test runtime_cli_matrix_test` passed.
