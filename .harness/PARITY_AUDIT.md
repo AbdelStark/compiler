@@ -150,10 +150,9 @@ cargo test --test runtime_external_introspector_delta_matrix_test -- --nocapture
 ```
 
 Current known deltas:
-- `checksig_verify_success`
-- `checksigfromstack_verify_success`
-- `checkmultisig_success`
-- `introspection_txhash_equal`
+- `(none)`
+
+As of 2026-03-03, full-corpus kind-parity convergence is complete.
 
 Interpretation:
 - These are semantic differences between current in-process runtime behavior and current introspector engine behavior.
