@@ -586,7 +586,7 @@ impl OpcodeDispatcher {
                 let group_index = Self::pop_index(vm)?;
                 let group = env.tx_context.group_at(group_index).ok_or_else(|| {
                     RuntimeError::new(
-                        RuntimeErrorCode::InvalidNumericEncoding,
+                        RuntimeErrorCode::IndexOutOfBounds,
                         format!("asset group index {group_index} is out of bounds"),
                     )
                 })?;
@@ -594,7 +594,7 @@ impl OpcodeDispatcher {
                 let asset = if source == 0 {
                     let input = env.tx_context.input_at(io_index).ok_or_else(|| {
                         RuntimeError::new(
-                            RuntimeErrorCode::InvalidNumericEncoding,
+                            RuntimeErrorCode::IndexOutOfBounds,
                             format!("input index {io_index} is out of bounds"),
                         )
                     })?;
@@ -602,7 +602,7 @@ impl OpcodeDispatcher {
                 } else {
                     let output = env.tx_context.output_at(io_index).ok_or_else(|| {
                         RuntimeError::new(
-                            RuntimeErrorCode::InvalidNumericEncoding,
+                            RuntimeErrorCode::IndexOutOfBounds,
                             format!("output index {io_index} is out of bounds"),
                         )
                     })?;
@@ -610,7 +610,7 @@ impl OpcodeDispatcher {
                 }
                 .ok_or_else(|| {
                     RuntimeError::new(
-                        RuntimeErrorCode::InvalidNumericEncoding,
+                        RuntimeErrorCode::AssetNotFound,
                         "group/io combination has no matching asset",
                     )
                 })?;

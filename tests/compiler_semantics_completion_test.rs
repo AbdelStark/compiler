@@ -87,3 +87,22 @@ fn scenario_3_function_call_statement_is_rejected_with_source_location() {
         "expected error to include unsupported construct text, got: {err}"
     );
 }
+
+#[test]
+fn dynamic_array_index_is_rejected_with_compile_error() {
+    let code = r#"
+        contract DynamicIndex(int[] arr, int idx) {
+            function read() {
+                let selected = arr[idx];
+            }
+        }
+    "#;
+
+    let err = compile(code)
+        .expect_err("dynamic array indices must be rejected before codegen")
+        .to_string();
+    assert!(
+        err.contains("arr[idx]"),
+        "expected error to identify dynamic array index expression, got: {err}"
+    );
+}

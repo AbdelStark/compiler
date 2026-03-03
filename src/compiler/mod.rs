@@ -136,6 +136,182 @@ fn expression_uses_introspection(expr: &Expression) -> bool {
     }
 }
 
+fn validate_function_codegen_supported(function: &Function) -> Result<(), String> {
+    validate_statements_for_codegen(&function.statements, &[])
+}
+
+fn validate_statements_for_codegen(
+    statements: &[Statement],
+    active_loop_indices: &[String],
+) -> Result<(), String> {
+    for statement in statements {
+        match statement {
+            Statement::Require(requirement) => {
+                validate_requirement_for_codegen(requirement, active_loop_indices)?;
+            }
+            Statement::IfElse {
+                condition,
+                then_body,
+                else_body,
+            } => {
+                validate_array_index_in_expression(condition, active_loop_indices)?;
+                validate_statements_for_codegen(then_body, active_loop_indices)?;
+                if let Some(else_statements) = else_body {
+                    validate_statements_for_codegen(else_statements, active_loop_indices)?;
+                }
+            }
+            Statement::ForIn {
+                index_var,
+                value_var: _,
+                iterable,
+                body,
+            } => {
+                validate_array_index_in_expression(iterable, active_loop_indices)?;
+                let mut nested_indices = active_loop_indices.to_vec();
+                nested_indices.push(index_var.clone());
+                validate_statements_for_codegen(body, &nested_indices)?;
+            }
+            Statement::LetBinding { value, .. } | Statement::VarAssign { value, .. } => {
+                validate_array_index_in_expression(value, active_loop_indices)?;
+            }
+        }
+    }
+    Ok(())
+}
+
+fn validate_requirement_for_codegen(
+    requirement: &Requirement,
+    active_loop_indices: &[String],
+) -> Result<(), String> {
+    if let Requirement::Comparison { left, right, .. } = requirement {
+        validate_array_index_in_expression(left, active_loop_indices)?;
+        validate_array_index_in_expression(right, active_loop_indices)?;
+    }
+    Ok(())
+}
+
+fn validate_array_index_in_expression(
+    expression: &Expression,
+    active_loop_indices: &[String],
+) -> Result<(), String> {
+    match expression {
+        Expression::Variable(_) => Ok(()),
+        Expression::Literal(_) => Ok(()),
+        Expression::Property(_) => Ok(()),
+        Expression::CurrentInput(_) => Ok(()),
+        Expression::AssetLookup { index, .. } => {
+            validate_array_index_in_expression(index, active_loop_indices)
+        }
+        Expression::AssetCount { index, .. } => {
+            validate_array_index_in_expression(index, active_loop_indices)
+        }
+        Expression::AssetAt {
+            io_index,
+            asset_index,
+            ..
+        } => {
+            validate_array_index_in_expression(io_index, active_loop_indices)?;
+            validate_array_index_in_expression(asset_index, active_loop_indices)
+        }
+        Expression::TxIntrospection { .. } => Ok(()),
+        Expression::InputIntrospection { index, .. } => {
+            validate_array_index_in_expression(index, active_loop_indices)
+        }
+        Expression::OutputIntrospection { index, .. } => {
+            validate_array_index_in_expression(index, active_loop_indices)
+        }
+        Expression::BinaryOp { left, right, .. } => {
+            validate_array_index_in_expression(left, active_loop_indices)?;
+            validate_array_index_in_expression(right, active_loop_indices)
+        }
+        Expression::GroupFind { .. } => Ok(()),
+        Expression::GroupProperty { .. } => Ok(()),
+        Expression::AssetGroupsLength => Ok(()),
+        Expression::GroupSum { index, .. } => {
+            validate_array_index_in_expression(index, active_loop_indices)
+        }
+        Expression::GroupNumIO { index, .. } => {
+            validate_array_index_in_expression(index, active_loop_indices)
+        }
+        Expression::GroupIOAccess {
+            group_index,
+            io_index,
+            ..
+        } => {
+            validate_array_index_in_expression(group_index, active_loop_indices)?;
+            validate_array_index_in_expression(io_index, active_loop_indices)
+        }
+        Expression::ArrayIndex { array, index } => {
+            validate_array_index_in_expression(array, active_loop_indices)?;
+            validate_array_index_in_expression(index, active_loop_indices)?;
+
+            match (array.as_ref(), index.as_ref()) {
+                (Expression::Variable(_), Expression::Literal(_)) => Ok(()),
+                (Expression::Variable(_), Expression::Variable(index_name))
+                    if active_loop_indices.iter().any(|name| name == index_name) =>
+                {
+                    Ok(())
+                }
+                (Expression::Variable(array_name), Expression::Variable(index_name)) => Err(
+                    format!(
+                        "array index '{}[{}]' is unsupported; use a literal index (e.g. {}[0]) or a loop index variable",
+                        array_name, index_name, array_name
+                    ),
+                ),
+                _ => Err(format!(
+                    "array index expression '{:?}[{:?}]' is unsupported",
+                    array, index
+                )),
+            }
+        }
+        Expression::ArrayLength(_) => Ok(()),
+        Expression::CheckSigExpr { .. } => Ok(()),
+        Expression::CheckSigFromStackExpr { .. } => Ok(()),
+        Expression::Sha256Initialize { data } => {
+            validate_array_index_in_expression(data, active_loop_indices)
+        }
+        Expression::Sha256Update { context, chunk } => {
+            validate_array_index_in_expression(context, active_loop_indices)?;
+            validate_array_index_in_expression(chunk, active_loop_indices)
+        }
+        Expression::Sha256Finalize {
+            context,
+            last_chunk,
+        } => {
+            validate_array_index_in_expression(context, active_loop_indices)?;
+            validate_array_index_in_expression(last_chunk, active_loop_indices)
+        }
+        Expression::Neg64 { value } => {
+            validate_array_index_in_expression(value, active_loop_indices)
+        }
+        Expression::Le64ToScriptNum { value } => {
+            validate_array_index_in_expression(value, active_loop_indices)
+        }
+        Expression::Le32ToLe64 { value } => {
+            validate_array_index_in_expression(value, active_loop_indices)
+        }
+        Expression::EcMulScalarVerify {
+            scalar,
+            point_p,
+            point_q,
+        } => {
+            validate_array_index_in_expression(scalar, active_loop_indices)?;
+            validate_array_index_in_expression(point_p, active_loop_indices)?;
+            validate_array_index_in_expression(point_q, active_loop_indices)
+        }
+        Expression::TweakVerify {
+            point_p,
+            tweak,
+            point_q,
+        } => {
+            validate_array_index_in_expression(point_p, active_loop_indices)?;
+            validate_array_index_in_expression(tweak, active_loop_indices)?;
+            validate_array_index_in_expression(point_q, active_loop_indices)
+        }
+        Expression::CheckSigFromStackVerify { .. } => Ok(()),
+    }
+}
+
 /// Collect all pubkey parameters from constructor and function for N-of-N fallback.
 /// The Arkade operator key is always external and never appears as a constructor parameter,
 /// so no exclusion is needed here.
@@ -216,6 +392,9 @@ pub fn compile(source_code: &str) -> Result<ContractJson, String> {
         if function.is_internal {
             continue;
         }
+
+        validate_function_codegen_supported(function)
+            .map_err(|err| format!("compile error in function '{}': {err}", function.name))?;
 
         let collaborative = generate_function(function, &contract, true);
         json.functions.push(collaborative);

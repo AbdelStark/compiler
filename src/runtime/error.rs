@@ -6,6 +6,8 @@ pub enum RuntimeErrorCode {
     StackUnderflow,
     StackOverflow,
     InvalidNumericEncoding,
+    IndexOutOfBounds,
+    AssetNotFound,
     DivisionByZero,
     InvalidBooleanEncoding,
     UnknownOpcode,
