@@ -346,6 +346,7 @@ fn emit_json_output(
         ),
     };
 
+    let tx_hash_hex = hex::encode(&tx_context.tx_hash);
     let envelope = RunOutputEnvelope {
         schema_version: 1,
         status,
@@ -354,7 +355,7 @@ fn emit_json_output(
             error_code,
             error_message,
             tx_context: RunTxContextPayload {
-                tx_hash: hex::encode(&tx_context.tx_hash),
+                tx_hash: tx_hash_hex,
             },
         },
     };

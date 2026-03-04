@@ -26,5 +26,14 @@ fn json_output_mode_parseable_cli_run_output_json_is_valid_envelope() {
         payload.get("schema_version").is_some(),
         "missing schema_version key"
     );
+    assert_eq!(
+        payload["status"], "true",
+        "expected successful run status to be true"
+    );
+    assert!(
+        payload["result"].is_object(),
+        "expected result to be a structured object"
+    );
+    assert_eq!(payload["result"]["outcome"], "script_true");
     assert_eq!(payload["schema_version"], 1);
 }

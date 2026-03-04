@@ -156,4 +156,8 @@ fn context_strict_rejects_unknown_fields_cli_run_reports_rogue_field() {
         stderr.contains("rogue_field"),
         "stderr should mention rogue_field, got: {stderr}"
     );
+    assert!(
+        stderr.to_ascii_lowercase().contains("unknown field"),
+        "stderr should describe an unknown field diagnostic, got: {stderr}"
+    );
 }
