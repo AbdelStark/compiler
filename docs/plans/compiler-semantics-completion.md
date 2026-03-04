@@ -313,11 +313,12 @@ Replace three uses of `InvalidNumericEncoding` in `OP_INSPECTASSETGROUP` handler
 
 | Scenario ID | BDD Scenario | Test File | Test Function(s) | Cargo Command |
 |-------------|-------------|-----------|-------------------|---------------|
-| `var-reassign-compiles` | Scenario 1: Variable reassignment lowers to stack-slot update | `tests/compiler_var_assign_test.rs` | `scenario_1_var_reassign_compiles`, `var_assign_emits_value_10_in_asm` | `cargo test --test compiler_var_assign_test` |
-| `array-index-emits-opcodes` | Scenario 2: Array index access emits retrieval opcodes | `tests/compiler_array_index_test.rs` | `scenario_2_array_index_literal_emits_placeholder`, `array_index_dynamic_rejected_with_location` | `cargo test --test compiler_array_index_test` |
-| `function-call-statement-rejected-with-location` | Scenario 3: Unsupported function-call emits located error | `tests/compiler_function_call_rejection_test.rs` | `scenario_3_function_call_rejected_with_line_number`, `function_call_error_message_includes_construct_text` | `cargo test --test compiler_function_call_rejection_test` |
-| `binding-inference-typed-default` | Scenario 4: Binding inference respects declared param type | `tests/runtime_binding_inference_test.rs` | `scenario_4_bytes_param_gets_bytes_default` | `cargo test --test runtime_binding_inference_test` |
-| `unknown-placeholder-emits-warning` | Scenario 5: Unknown placeholder emits diagnostic warning | `tests/runtime_binding_inference_test.rs` | `scenario_5_unknown_placeholder_warning_in_diagnostics`, `known_typed_placeholder_no_warning` | `cargo test --test runtime_binding_inference_test` |
+| `var-reassign-compiles` | Scenario 1: Variable reassignment lowers to stack-slot update | `tests/compiler_semantics_completion_test.rs` | `scenario_1_var_assign_updates_active_stack_value` | `cargo test --test compiler_semantics_completion_test` |
+| `array-index-emits-opcodes` | Scenario 2: Array index access emits retrieval opcodes | `tests/compiler_semantics_completion_test.rs` | `scenario_2_array_index_literal_uses_flattened_binding_and_keeps_value_accessible` | `cargo test --test compiler_semantics_completion_test` |
+| `function-call-statement-rejected-with-location` | Scenario 3: Unsupported function-call emits located error | `tests/compiler_semantics_completion_test.rs` | `scenario_3_function_call_statement_is_rejected_with_source_location` | `cargo test --test compiler_semantics_completion_test` |
+| `binding-inference-typed-default` | Scenario 4: Binding inference respects declared param type | `tests/runtime_binding_inference_test.rs` | `scenario_4_binding_inference_typed_bytes_defaults_to_empty_bytes` | `cargo test --test runtime_binding_inference_test` |
+| `unknown-placeholder-emits-warning` | Scenario 5: Unknown placeholder emits diagnostic warning | `tests/runtime_binding_inference_test.rs` | `scenario_5_unknown_placeholder_default_api_keeps_symbolic_binding_and_warns` | `cargo test --test runtime_binding_inference_test` |
+| `acceptance-criterion-6` | Unknown placeholder warning reaches CLI stderr | `tests/runtime_binding_inference_test.rs` | `acceptance_criterion_6_unknown_placeholder_emits_warning_to_stderr_cli` | `cargo test --test runtime_binding_inference_test` |
 | (introspection parity) | Richer error codes for introspection | `tests/runtime_introspection_error_codes_test.rs` | `out_of_bounds_group_index_returns_index_out_of_bounds`, `missing_asset_returns_asset_not_found` | `cargo test --test runtime_introspection_error_codes_test` |
 
 ---
@@ -326,9 +327,8 @@ Replace three uses of `InvalidNumericEncoding` in `OP_INSPECTASSETGROUP` handler
 
 | File | Purpose |
 |------|---------|
-| `tests/compiler_var_assign_test.rs` | Scenario 1 integration tests |
-| `tests/compiler_array_index_test.rs` | Scenario 2 integration tests |
-| `tests/compiler_function_call_rejection_test.rs` | Scenario 3 integration tests |
+| `tests/compiler_semantics_completion_test.rs` | Scenarios 1, 2, and 3 integration tests |
+| `tests/runtime_binding_inference_test.rs` | Scenarios 4 and 5 plus AC#6 stderr coverage |
 | `tests/runtime_introspection_error_codes_test.rs` | Introspection error code tests |
 
 ## 6. Files to Modify

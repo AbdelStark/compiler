@@ -346,10 +346,8 @@ These would require adding variants to `RuntimeErrorCode` in `src/runtime/error.
 
 | Test File | Scenario | Coverage |
 |-----------|----------|----------|
-| `tests/compiler_var_assign_test.rs` | Scenario 1 | VarAssign compiles without error + opcodes emitted |
-| `tests/compiler_array_index_test.rs` | Scenario 2 | `arr[0]` lowers to `<arr_0>`, runtime makes value 42 available |
-| `tests/compiler_function_call_rejection_test.rs` | Scenario 3 | `foo(bar);` returns Err with line number in message |
-| `tests/runtime_binding_inference_test.rs` | Scenario 4 + 5 | bytes-typed param binding, warning for unknown placeholder |
+| `tests/compiler_semantics_completion_test.rs` | Scenario 1 + 2 + 3 | VarAssign behavior, array-index runtime accessibility, function-call rejection with source location |
+| `tests/runtime_binding_inference_test.rs` | Scenario 4 + 5 (+ AC#6) | bytes-typed param binding, unknown-placeholder warning and stderr emission path |
 
 ### Existing Test to Extend
 
