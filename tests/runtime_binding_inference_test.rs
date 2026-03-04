@@ -7,6 +7,26 @@ use arkade_compiler::runtime::env::stack_value_to_bytes;
 use arkade_compiler::runtime::value::StackValue;
 use arkade_compiler::runtime::LoadedProgram;
 
+fn warnings_program_fixture() -> LoadedProgram {
+    LoadedProgram {
+        contract_name: "Warnings".to_string(),
+        function_name: "run".to_string(),
+        server_variant: true,
+        asm: vec!["<mysteryToken>".to_string()],
+        param_types: HashMap::new(),
+    }
+}
+
+fn run_warning_probe_test() -> std::process::Output {
+    let test_binary = std::env::current_exe().expect("current test binary path should resolve");
+    Command::new(test_binary)
+        .arg("--exact")
+        .arg("unknown_placeholder_default_api_warning_probe")
+        .arg("--nocapture")
+        .output()
+        .expect("warning probe subprocess should execute")
+}
+
 #[test]
 fn default_bindings_use_artifact_abi_types() {
     let program =
@@ -69,14 +89,8 @@ fn scenario_4_binding_inference_typed_bytes_defaults_to_empty_bytes() {
 }
 
 #[test]
-fn scenario_5_unknown_placeholder_default_api_keeps_symbolic_binding() {
-    let program = LoadedProgram {
-        contract_name: "Warnings".to_string(),
-        function_name: "run".to_string(),
-        server_variant: true,
-        asm: vec!["<mysteryToken>".to_string()],
-        param_types: HashMap::new(),
-    };
+fn scenario_5_unknown_placeholder_default_api_keeps_symbolic_binding_and_warns() {
+    let program = warnings_program_fixture();
 
     let bindings = arkade_compiler::runtime::default_bindings_for_program(&program);
 
@@ -84,21 +98,24 @@ fn scenario_5_unknown_placeholder_default_api_keeps_symbolic_binding() {
         bindings.get("mysteryToken"),
         Some(&StackValue::Symbol("mysteryToken".to_string()))
     );
+
+    let output = run_warning_probe_test();
     assert!(
-        !matches!(bindings.get("mysteryToken"), Some(StackValue::Int(_))),
-        "unknown placeholders must not be silently coerced to numeric defaults"
+        output.status.success(),
+        "stderr probe subprocess failed: stdout={}, stderr={}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("unknown placeholder 'mysteryToken'"),
+        "expected default API warning on stderr, got: {stderr}"
     );
 }
 
 #[test]
 fn unknown_placeholder_is_reported_by_diagnostics_variant() {
-    let program = LoadedProgram {
-        contract_name: "Warnings".to_string(),
-        function_name: "run".to_string(),
-        server_variant: true,
-        asm: vec!["<mysteryToken>".to_string()],
-        param_types: HashMap::new(),
-    };
+    let program = warnings_program_fixture();
 
     let (_bindings, warnings) =
         arkade_compiler::runtime::default_bindings_for_program_with_diagnostics(&program);
@@ -112,7 +129,17 @@ fn unknown_placeholder_is_reported_by_diagnostics_variant() {
 }
 
 #[test]
-fn scenario_6_unknown_placeholder_emits_warning_to_stderr() {
+fn unknown_placeholder_default_api_warning_probe() {
+    let program = warnings_program_fixture();
+    let bindings = arkade_compiler::runtime::default_bindings_for_program(&program);
+    assert_eq!(
+        bindings.get("mysteryToken"),
+        Some(&StackValue::Symbol("mysteryToken".to_string()))
+    );
+}
+
+#[test]
+fn acceptance_criterion_6_unknown_placeholder_emits_warning_to_stderr_cli() {
     let temp = tempfile::tempdir().expect("tempdir should be created");
     let artifact_path = temp.path().join("warnings.json");
     let artifact_json = serde_json::json!({
