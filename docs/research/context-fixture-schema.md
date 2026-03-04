@@ -329,17 +329,19 @@ The WASM API convention (see existing `bindings_json` handling in `wasm.rs:176-1
 
 ---
 
-## 7. File Impact Summary
+## 7. Files to Review (Complete Scope)
 
 | File | Change Type | Zone |
 |------|-------------|------|
 | `src/main.rs` | Modify — add CLI flags to `Command::Run`, extend `run_command` | autonomous |
 | `src/runtime/context_fixture.rs` | Create — wire types, deserialization, conversion | autonomous |
+| `src/runtime/mod.rs` | Modify — register `context_fixture` module export | autonomous |
 | `src/wasm.rs` | Modify — add `context_json` param to WASM functions | autonomous |
-| `src/runtime/env.rs` | Possibly modify — `TxContext` conversion method | autonomous |
+| `tests/context_fixture_unit_test.rs` | Create — unit coverage for parse/strict/fallback/hex errors | autonomous |
 | `tests/runtime_cli_context_file_test.rs` | Create — Scenario 1 integration test | autonomous |
-| `tests/runtime_cli_json_output_test.rs` | Create — Scenario 4 integration test | autonomous |
 | `tests/runtime_cli_context_strict_test.rs` | Create — Scenario 3 integration test | autonomous |
+| `tests/runtime_cli_json_output_test.rs` | Create — Scenario 4 integration test | autonomous |
+| `tests/wasm_context_test.rs` | Create — Scenario 5 context propagation coverage | autonomous |
 
 ---
 
