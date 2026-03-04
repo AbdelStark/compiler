@@ -1,6 +1,5 @@
-#[test]
-fn wasm_context_json_propagated_execute_contract_json_uses_context_txid() {
-    let contract_json = r#"{
+fn wasm_contract_json() -> &'static str {
+    r#"{
   "contractName": "wasm_txhash_check",
   "constructorInputs": [],
   "functions": [
@@ -12,23 +11,47 @@ fn wasm_context_json_propagated_execute_contract_json_uses_context_txid() {
       "asm": ["OP_TXHASH", "deadbeef00", "OP_EQUAL"]
     }
   ]
-}"#;
+}"#
+}
 
-    let context_json = r#"{
+fn wasm_context_json() -> &'static str {
+    r#"{
   "tx_context": {
     "txid": "deadbeef00"
   }
-}"#;
+}"#
+}
 
-    let runtime_json =
-        arkade_compiler::wasm::execute_contract_json(contract_json, "claim", context_json)
-            .expect("execute_contract_json should return success");
-
+fn assert_runtime_tx_hash(runtime_json: &str, expected: &str) {
     let payload: serde_json::Value =
-        serde_json::from_str(&runtime_json).expect("WASM runtime output should be valid json");
-
-    assert_eq!(payload["tx_context"]["tx_hash"], "deadbeef00");
+        serde_json::from_str(runtime_json).expect("WASM runtime output should be valid json");
+    assert_eq!(payload["tx_context"]["tx_hash"], expected);
     assert_eq!(payload["outcome"], "script_true");
+}
+
+#[test]
+fn wasm_context_json_propagated_execute_contract_json_uses_context_txid() {
+    let runtime_json = arkade_compiler::wasm::execute_contract_json(
+        wasm_contract_json(),
+        "claim",
+        wasm_context_json(),
+    )
+    .expect("execute_contract_json should return success");
+
+    assert_runtime_tx_hash(&runtime_json, "deadbeef00");
+}
+
+#[cfg(target_arch = "wasm32")]
+#[wasm_bindgen_test::wasm_bindgen_test]
+fn wasm_context_json_propagated_execute_contract_json_uses_context_txid_in_wasm_runtime() {
+    let runtime_json = arkade_compiler::wasm::execute_contract_json(
+        wasm_contract_json(),
+        "claim",
+        wasm_context_json(),
+    )
+    .expect("execute_contract_json should return success");
+
+    assert_runtime_tx_hash(&runtime_json, "deadbeef00");
 }
 
 #[test]
