@@ -1,0 +1,69 @@
+// Runtime demo contract for the playground runtime tab.
+// All functions have zero parameters so they run immediately.
+//
+// Suggested walkthrough:
+// 1) alwaysPass          -> script_true
+// 2) alwaysFail          -> script_false
+// 3) branchPass          -> script_true with OP_IF / OP_ELSE
+// 4) inequalityPass      -> script_true using OP_EQUAL + OP_NOT
+// 5) multiCheckPass      -> script_true with multiple comparisons
+// 6) nestedBranchPass    -> script_true with nested branches
+// 7) capCheck(level)     -> easy int input (default 0 passes)
+// 8) boolToggle(enabled) -> easy bool input (default true passes)
+// 9) runtimeError        -> runtime_error (division by zero)
+
+contract RuntimeDemo() {
+  function alwaysPass() {
+    require(9 > 1, "constant pass");
+  }
+
+  function alwaysFail() {
+    require(1 > 9, "constant false");
+  }
+
+  function branchPass() {
+    if (1) {
+      require(3 < 8, "if branch true");
+    } else {
+      require(9 < 2, "else branch false");
+    }
+  }
+
+  function inequalityPass() {
+    require(42 != 7, "not equal");
+  }
+
+  function multiCheckPass() {
+    require(90 > 5, "upper compare");
+    require(5 < 90, "lower compare");
+  }
+
+  function nestedBranchPass() {
+    if (1) {
+      if (1) {
+        require(12 > 4, "nested true path");
+      } else {
+        require(1 > 9, "unreachable nested else");
+      }
+    } else {
+      require(1 > 9, "unreachable outer else");
+    }
+  }
+
+  function capCheck(int level) {
+    require(100 > level, "level must stay below cap");
+  }
+
+  function boolToggle(bool enabled) {
+    if (enabled) {
+      require(8 > 2, "enabled path");
+    } else {
+      require(2 > 8, "disabled path");
+    }
+  }
+
+  function runtimeError() {
+    let explodingValue = 42 / 0;
+    require(explodingValue != 0, "intentional runtime error");
+  }
+}

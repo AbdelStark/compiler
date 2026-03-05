@@ -92,27 +92,117 @@
                     <div class="runtime-controls">
                         <label for="runtime-function">Function</label>
                         <select id="runtime-function"></select>
+                        <label for="runtime-mode">Mode</label>
+                        <select id="runtime-mode">
+                            <option value="development">development</option>
+                            <option value="simulation">simulation</option>
+                            <option value="ci">ci</option>
+                            <option value="safety">safety</option>
+                        </select>
+                        <button id="runtime-fill-bindings-btn" class="btn-secondary" title="Generate bindings template">
+                            <i class="fas fa-wand-magic-sparkles"></i> Fill Bindings
+                        </button>
+                        <button id="runtime-run-btn" class="btn-secondary">
+                            <i class="fas fa-bolt"></i> Execute
+                        </button>
+                        <button id="runtime-run-matrix-btn" class="btn-secondary">
+                            <i class="fas fa-table-cells-large"></i> Run Matrix
+                        </button>
+                        <button id="runtime-stop-matrix-btn" class="btn-secondary btn-danger" hidden>
+                            <i class="fas fa-stop"></i> Stop Matrix
+                        </button>
+                    </div>
+                    <div class="runtime-advanced-controls">
                         <label class="runtime-checkbox">
                             <input type="checkbox" id="runtime-strict">
                             Strict placeholders
                         </label>
-                        <button id="runtime-run-btn" class="btn-secondary">
-                            <i class="fas fa-bolt"></i> Execute
-                        </button>
+                        <label class="runtime-checkbox">
+                            <input type="checkbox" id="runtime-strict-types">
+                            Strict types
+                        </label>
+                        <label class="runtime-checkbox">
+                            <input type="checkbox" id="runtime-strict-bindings">
+                            Strict bindings
+                        </label>
+                        <label class="runtime-checkbox">
+                            <input type="checkbox" id="runtime-context-strict">
+                            Strict context
+                        </label>
                     </div>
-                    <div class="runtime-bindings">
-                        <label for="runtime-bindings">Bindings (one per line: key=value)</label>
-                        <textarea id="runtime-bindings" spellcheck="false" placeholder="ownerSig=hex:30440220...
+                    <div class="runtime-editors">
+                        <div class="runtime-bindings">
+                            <div class="runtime-editor-header">
+                                <label for="runtime-bindings">Bindings (one per line: key=value)</label>
+                            </div>
+                            <textarea id="runtime-bindings" spellcheck="false" placeholder="ownerSig=hex:30440220...
 refundTime=144
 preimage=utf8:hello"></textarea>
+                        </div>
+                        <div class="runtime-context-block">
+                            <div class="runtime-editor-header">
+                                <label for="runtime-context">Transaction Context (JSON)</label>
+                                <div class="runtime-context-actions">
+                                    <select id="runtime-context-preset">
+                                        <option value="empty">Empty context</option>
+                                        <option value="simple">Simple spend fixture</option>
+                                        <option value="asset">Asset transfer fixture</option>
+                                    </select>
+                                    <button id="runtime-apply-context-preset" class="btn-secondary">
+                                        <i class="fas fa-file-import"></i> Apply
+                                    </button>
+                                </div>
+                            </div>
+                            <textarea id="runtime-context" spellcheck="false" placeholder='{
+  "txid": "0101...",
+  "version": 2,
+  "currentInputIndex": 0,
+  "inputs": [],
+  "outputs": []
+}'></textarea>
+                        </div>
                     </div>
                     <div id="runtime-summary" class="runtime-summary">
                         Compile a contract, then execute one function path here.
+                    </div>
+                    <div class="runtime-insights">
+                        <div class="runtime-insight-card">
+                            <h4>Total</h4>
+                            <span id="runtime-metric-total-ms">0.00 ms</span>
+                        </div>
+                        <div class="runtime-insight-card">
+                            <h4>VM</h4>
+                            <span id="runtime-metric-vm-ms">0.00 ms</span>
+                        </div>
+                        <div class="runtime-insight-card">
+                            <h4>Steps</h4>
+                            <span id="runtime-metric-steps">0</span>
+                        </div>
+                        <div class="runtime-insight-card">
+                            <h4>Policy Steps</h4>
+                            <span id="runtime-metric-policy">0</span>
+                        </div>
+                    </div>
+                    <div class="runtime-details-grid">
+                        <div class="runtime-detail-panel">
+                            <h4>Trace Metadata</h4>
+                            <pre id="runtime-trace"></pre>
+                        </div>
+                        <div class="runtime-detail-panel">
+                            <h4>Policy + Options</h4>
+                            <pre id="runtime-policy"></pre>
+                        </div>
+                    </div>
+                    <div class="runtime-matrix">
+                        <h4>Matrix Results</h4>
+                        <div id="runtime-matrix-summary" class="runtime-matrix-summary">Run matrix to benchmark every function variant.</div>
+                        <div id="runtime-matrix-table" class="runtime-matrix-table"></div>
                     </div>
                     <div class="runtime-stepper">
                         <button id="runtime-prev-step" class="btn-secondary" disabled>
                             <i class="fas fa-chevron-left"></i> Prev
                         </button>
+                        <input id="runtime-step-slider" type="range" min="0" max="0" value="0" disabled>
                         <span id="runtime-step-label">Step 0 / 0</span>
                         <button id="runtime-next-step" class="btn-secondary" disabled>
                             Next <i class="fas fa-chevron-right"></i>

@@ -18,6 +18,7 @@ const projects = {
 
 // Single file examples
 const examples = {
+    runtime_demo: { name: 'RuntimeDemo', code: contracts.runtime_demo },
     single_sig: { name: 'SingleSig', code: contracts.single_sig },
     htlc: { name: 'HTLC', code: contracts.htlc },
     fuji_safe: { name: 'FujiSafe', code: contracts.fuji_safe },
@@ -38,9 +39,113 @@ let lastCompiledArtifactJson = null; // Raw JSON artifact string
 let lastRuntimeResult = null; // Parsed runtime result JSON
 let runtimeStepIndex = -1;
 let runtimeFunctionVariants = [];
+let lastRuntimeMatrixResults = [];
+let lastCompileDurationMs = 0;
+let runtimeTraceView = null;
+let runtimeResultStale = false;
+let jsonRenderCacheRaw = null;
+let jsonRenderCacheHtml = null;
+let activeMatrixRunId = 0;
+let matrixRunActive = false;
+
+const JSON_SYNTAX_HIGHLIGHT_LIMIT = 250_000;
+const ASM_TOKEN_HIGHLIGHT_LIMIT = 14_000;
+const MAX_RUNTIME_TRACE_STEPS = 1_600;
+const MATRIX_RENDER_BATCH_SIZE = 12;
+const MATRIX_PROGRESS_INTERVAL_MS = 60;
+const MATRIX_YIELD_INTERVAL_MS = 16;
 
 // ── localStorage persistence ──────────────────────────────────────
 const STORAGE_KEY = 'arkade-playground';
+const RUNTIME_STORAGE_KEY = 'arkade-playground-runtime-v2';
+
+const RUNTIME_CONTEXT_PRESETS = {
+    empty: '',
+    simple: JSON.stringify({
+        txid: '0101010101010101010101010101010101010101010101010101010101010101',
+        version: 2,
+        locktime: 0,
+        weight: 540,
+        currentInputIndex: 0,
+        inputs: [
+            {
+                value: 100000,
+                scriptPubKey: '5121031111111111111111111111111111111111111111111111111111111111111111ac',
+                sequence: 4294967293,
+                outpoint: '0202020202020202020202020202020202020202020202020202020202020202',
+                issuance: '',
+                assets: []
+            }
+        ],
+        outputs: [
+            {
+                value: 99500,
+                scriptPubKey: '00140000000000000000000000000000000000000000',
+                nonce: '0303030303030303030303030303030303030303030303030303030303030303',
+                assets: []
+            }
+        ],
+        assetGroups: []
+    }, null, 2),
+    asset: JSON.stringify({
+        txid: '1111111111111111111111111111111111111111111111111111111111111111',
+        version: 2,
+        locktime: 12,
+        weight: 910,
+        currentInputIndex: 1,
+        inputs: [
+            {
+                value: 220000,
+                scriptPubKey: '512102aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaac',
+                sequence: 4294967280,
+                outpoint: '2222222222222222222222222222222222222222222222222222222222222222',
+                issuance: '0a0b0c0d',
+                assets: [
+                    {
+                        txid: '3333333333333333333333333333333333333333333333333333333333333333',
+                        gidx: 0,
+                        amount: 5000,
+                        data: '746573742d61737365742d696e',
+                        control: '636f6e74726f6c2d696e',
+                        metadataHash: '4444444444444444444444444444444444444444444444444444444444444444',
+                        assetId: '5555555555555555555555555555555555555555555555555555555555555555'
+                    }
+                ]
+            }
+        ],
+        outputs: [
+            {
+                value: 218500,
+                scriptPubKey: '00148888888888888888888888888888888888888888',
+                nonce: '6666666666666666666666666666666666666666666666666666666666666666',
+                assets: [
+                    {
+                        txid: '3333333333333333333333333333333333333333333333333333333333333333',
+                        gidx: 0,
+                        amount: 4900,
+                        data: '746573742d61737365742d6f7574',
+                        control: '636f6e74726f6c2d6f7574',
+                        metadataHash: '4444444444444444444444444444444444444444444444444444444444444444',
+                        assetId: '5555555555555555555555555555555555555555555555555555555555555555'
+                    }
+                ]
+            }
+        ],
+        assetGroups: [
+            {
+                txid: '3333333333333333333333333333333333333333333333333333333333333333',
+                gidx: 0,
+                sumInputs: 5000,
+                sumOutputs: 4900,
+                numInputs: 1,
+                numOutputs: 1,
+                control: '636f6e74726f6c2d67726f7570',
+                metadataHash: '4444444444444444444444444444444444444444444444444444444444444444',
+                assetId: '5555555555555555555555555555555555555555555555555555555555555555'
+            }
+        ]
+    }, null, 2)
+};
 
 function saveToStorage() {
     const data = {
@@ -75,6 +180,116 @@ function loadFromStorage() {
     } catch (e) {
         console.warn('Failed to load from localStorage:', e);
     }
+}
+
+function loadRuntimeSettings() {
+    try {
+        const raw = localStorage.getItem(RUNTIME_STORAGE_KEY);
+        if (!raw) {
+            return null;
+        }
+        return JSON.parse(raw);
+    } catch (err) {
+        console.warn('Failed to load runtime settings:', err);
+        return null;
+    }
+}
+
+function saveRuntimeSettings() {
+    const bindingsEl = document.getElementById('runtime-bindings');
+    const contextEl = document.getElementById('runtime-context');
+    const modeEl = document.getElementById('runtime-mode');
+    if (!bindingsEl || !contextEl || !modeEl) {
+        return;
+    }
+
+    const payload = {
+        bindings: bindingsEl.value || '',
+        context: contextEl.value || '',
+        mode: modeEl.value || 'development',
+        strictPlaceholders: Boolean(document.getElementById('runtime-strict')?.checked),
+        strictTypes: Boolean(document.getElementById('runtime-strict-types')?.checked),
+        strictBindings: Boolean(document.getElementById('runtime-strict-bindings')?.checked),
+        contextStrict: Boolean(document.getElementById('runtime-context-strict')?.checked)
+    };
+
+    localStorage.setItem(RUNTIME_STORAGE_KEY, JSON.stringify(payload));
+}
+
+function applyRuntimeSettings(settings) {
+    if (!settings) {
+        return;
+    }
+
+    const bindingsEl = document.getElementById('runtime-bindings');
+    const contextEl = document.getElementById('runtime-context');
+    const modeEl = document.getElementById('runtime-mode');
+    if (bindingsEl && typeof settings.bindings === 'string') {
+        bindingsEl.value = settings.bindings;
+    }
+    if (contextEl && typeof settings.context === 'string') {
+        contextEl.value = settings.context;
+    }
+    if (modeEl && typeof settings.mode === 'string') {
+        modeEl.value = settings.mode;
+    }
+
+    const strictEl = document.getElementById('runtime-strict');
+    const strictTypesEl = document.getElementById('runtime-strict-types');
+    const strictBindingsEl = document.getElementById('runtime-strict-bindings');
+    const contextStrictEl = document.getElementById('runtime-context-strict');
+    if (strictEl) strictEl.checked = Boolean(settings.strictPlaceholders);
+    if (strictTypesEl) strictTypesEl.checked = Boolean(settings.strictTypes);
+    if (strictBindingsEl) strictBindingsEl.checked = Boolean(settings.strictBindings);
+    if (contextStrictEl) contextStrictEl.checked = Boolean(settings.contextStrict);
+}
+
+function formatMs(ms) {
+    if (!Number.isFinite(ms) || ms < 0) {
+        return '0.00 ms';
+    }
+    return `${ms.toFixed(2)} ms`;
+}
+
+function formatNanosAsMs(nanos) {
+    const value = Number(nanos);
+    if (!Number.isFinite(value) || value < 0) {
+        return '0.00 ms';
+    }
+    return `${(value / 1_000_000).toFixed(2)} ms`;
+}
+
+function cancelRuntimeMatrixRun(reason = null) {
+    activeMatrixRunId += 1;
+    const runBtn = document.getElementById('runtime-run-btn');
+    const matrixBtn = document.getElementById('runtime-run-matrix-btn');
+    const stopBtn = document.getElementById('runtime-stop-matrix-btn');
+    if (runBtn && matrixBtn) {
+        setRuntimeBusy(false);
+    }
+    if (reason) {
+        const summaryEl = document.getElementById('runtime-matrix-summary');
+        if (summaryEl) {
+            summaryEl.classList.remove('running');
+            summaryEl.classList.add('complete');
+            summaryEl.textContent = reason;
+        }
+    }
+    if (stopBtn) {
+        stopBtn.hidden = true;
+    }
+}
+
+function stopRuntimeMatrix() {
+    if (!matrixRunActive) {
+        return;
+    }
+    const renderedRows = document.querySelectorAll('#runtime-matrix-body tr').length;
+    cancelRuntimeMatrixRun(`Matrix run stopped by user at ${renderedRows}/${runtimeFunctionVariants.length} paths.`);
+}
+
+function waitForNextFrame() {
+    return new Promise((resolve) => requestAnimationFrame(() => resolve()));
 }
 
 // ── URL sharing ───────────────────────────────────────────────────
@@ -1040,7 +1255,7 @@ function initMonaco() {
 
         // Create editor
         editor = monaco.editor.create(document.getElementById('editor'), {
-            value: examples.single_sig.code,
+            value: examples.runtime_demo.code,
             language: 'arkade',
             theme: 'arkade-dark',
             automaticLayout: true,
@@ -1084,12 +1299,122 @@ function initMonaco() {
     });
 }
 
-function resetRuntimeUI(message) {
-    lastRuntimeResult = null;
-    runtimeStepIndex = -1;
+function buildRuntimeTraceView(runtimeJson) {
+    const telemetry = Array.isArray(runtimeJson?.telemetry) ? runtimeJson.telemetry : [];
+    if (telemetry.length === 0) {
+        return {
+            entries: [],
+            beforeCache: [],
+            afterCache: [],
+            totalSteps: 0,
+            stride: 1,
+        };
+    }
 
+    const stride = telemetry.length > MAX_RUNTIME_TRACE_STEPS
+        ? Math.ceil(telemetry.length / MAX_RUNTIME_TRACE_STEPS)
+        : 1;
+    const entries = [];
+    for (let i = 0; i < telemetry.length; i += stride) {
+        entries.push({ sourceIndex: i, step: telemetry[i] });
+    }
+    if (entries[entries.length - 1]?.sourceIndex !== telemetry.length - 1) {
+        entries.push({ sourceIndex: telemetry.length - 1, step: telemetry[telemetry.length - 1] });
+    }
+
+    return {
+        entries,
+        beforeCache: new Array(entries.length),
+        afterCache: new Array(entries.length),
+        totalSteps: telemetry.length,
+        stride,
+    };
+}
+
+function markRuntimeFresh() {
+    runtimeResultStale = false;
+}
+
+function markRuntimeStale(reason) {
+    if (!lastRuntimeResult && !lastRuntimeMatrixResults.length) {
+        return;
+    }
+    if (runtimeResultStale) {
+        return;
+    }
+    runtimeResultStale = true;
     const summaryEl = document.getElementById('runtime-summary');
     summaryEl.classList.remove('success', 'error');
+    summaryEl.classList.add('stale');
+    summaryEl.textContent = `Stale result: ${reason}\nPress Execute to refresh runtime diagnostics.`;
+}
+
+function setRuntimeMetricDefaults() {
+    document.getElementById('runtime-metric-total-ms').textContent = '0.00 ms';
+    document.getElementById('runtime-metric-vm-ms').textContent = '0.00 ms';
+    document.getElementById('runtime-metric-steps').textContent = '0';
+    document.getElementById('runtime-metric-policy').textContent = '0';
+    document.getElementById('runtime-trace').textContent = 'No trace yet.';
+    document.getElementById('runtime-policy').textContent = 'No policy snapshot yet.';
+}
+
+function runtimeVariantLabel(variant) {
+    return `${variant.name} (${variant.serverVariant ? 'cooperative' : 'exit'})`;
+}
+
+function refreshRuntimeActionButtons(isBusy) {
+    const hasVariants = runtimeFunctionVariants.length > 0;
+    const runBtn = document.getElementById('runtime-run-btn');
+    const matrixBtn = document.getElementById('runtime-run-matrix-btn');
+    const fillBtn = document.getElementById('runtime-fill-bindings-btn');
+    const stopBtn = document.getElementById('runtime-stop-matrix-btn');
+    runBtn.disabled = isBusy || !hasVariants;
+    matrixBtn.disabled = isBusy || !hasVariants;
+    fillBtn.disabled = isBusy || !hasVariants;
+    if (stopBtn) {
+        stopBtn.disabled = !matrixRunActive;
+    }
+}
+
+function setRuntimeBusy(isBusy, mode = null) {
+    const runBtn = document.getElementById('runtime-run-btn');
+    const matrixBtn = document.getElementById('runtime-run-matrix-btn');
+    const stopBtn = document.getElementById('runtime-stop-matrix-btn');
+    if (!runBtn.dataset.defaultLabel) runBtn.dataset.defaultLabel = runBtn.innerHTML;
+    if (!matrixBtn.dataset.defaultLabel) matrixBtn.dataset.defaultLabel = matrixBtn.innerHTML;
+    if (isBusy && mode === 'matrix') {
+        matrixRunActive = true;
+    } else if (!isBusy) {
+        matrixRunActive = false;
+    }
+
+    if (isBusy) {
+        if (mode === 'single') {
+            runBtn.innerHTML = '<i class="fas fa-circle-notch fa-spin"></i> Executing';
+        }
+        if (mode === 'matrix') {
+            matrixBtn.innerHTML = '<i class="fas fa-circle-notch fa-spin"></i> Running';
+        }
+    } else {
+        runBtn.innerHTML = runBtn.dataset.defaultLabel;
+        matrixBtn.innerHTML = matrixBtn.dataset.defaultLabel;
+    }
+    if (stopBtn) {
+        stopBtn.hidden = !matrixRunActive;
+    }
+
+    refreshRuntimeActionButtons(isBusy);
+}
+
+function resetRuntimeUI(message) {
+    cancelRuntimeMatrixRun();
+    lastRuntimeResult = null;
+    runtimeStepIndex = -1;
+    runtimeTraceView = null;
+    markRuntimeFresh();
+
+    const summaryEl = document.getElementById('runtime-summary');
+    summaryEl.classList.remove('success', 'error', 'stale');
     summaryEl.textContent = message;
 
     document.getElementById('runtime-step-label').textContent = 'Step 0 / 0';
@@ -1098,11 +1423,85 @@ function resetRuntimeUI(message) {
     document.getElementById('runtime-alt-stack').textContent = '';
     document.getElementById('runtime-prev-step').disabled = true;
     document.getElementById('runtime-next-step').disabled = true;
+
+    const slider = document.getElementById('runtime-step-slider');
+    slider.value = '0';
+    slider.max = '0';
+    slider.disabled = true;
+
+    lastRuntimeMatrixResults = [];
+    const matrixSummaryEl = document.getElementById('runtime-matrix-summary');
+    matrixSummaryEl.classList.remove('running', 'complete');
+    matrixSummaryEl.textContent = 'Run matrix to benchmark every function variant.';
+    document.getElementById('runtime-matrix-table').textContent = '';
+
+    setRuntimeMetricDefaults();
+}
+
+function invalidateRuntimeResult(reason) {
+    markRuntimeStale(reason);
+}
+
+function runtimeBindingDefaultForInput(rawType, inputName) {
+    const type = String(rawType || '').toLowerCase();
+    if (type.includes('signature')) return 'hex:30440220...';
+    if (type.includes('pubkey')) return 'hex:02...';
+    if (type.includes('bytes') || type.includes('hash') || type.includes('preimage')) return 'hex:00';
+    if (type.includes('utf8') || type.includes('string')) return 'utf8:text';
+    if (type.includes('bool')) return 'true';
+    if (type.includes('int') || type.includes('amount') || type.includes('time') || type.includes('height')) return '0';
+    return inputName;
+}
+
+function variantHasExplicitInputs(variant) {
+    return Boolean(variant && Array.isArray(variant.functionInputs) && variant.functionInputs.length > 0);
+}
+
+function buildBindingsTemplate(variant) {
+    if (!variantHasExplicitInputs(variant)) {
+        return '';
+    }
+
+    const lines = variant.functionInputs.map((input) => {
+        const name = input?.name || 'arg';
+        const value = runtimeBindingDefaultForInput(input?.type, name);
+        return `${name}=${value}`;
+    });
+    return lines.join('\n');
+}
+
+function fillBindingsTemplateForSelected(forceReplace = true) {
+    const bindingsEl = document.getElementById('runtime-bindings');
+    if (!bindingsEl) {
+        return false;
+    }
+
+    let variant;
+    try {
+        variant = selectedRuntimeFunction();
+    } catch {
+        return false;
+    }
+
+    if (!variantHasExplicitInputs(variant)) {
+        if (bindingsEl.value) {
+            bindingsEl.value = '';
+            saveRuntimeSettings();
+        }
+        return true;
+    }
+
+    if (!forceReplace && bindingsEl.value.trim()) {
+        return false;
+    }
+
+    bindingsEl.value = buildBindingsTemplate(variant);
+    saveRuntimeSettings();
+    return true;
 }
 
 function loadRuntimeFunctionOptions(contract) {
     const select = document.getElementById('runtime-function');
-    const runBtn = document.getElementById('runtime-run-btn');
     runtimeFunctionVariants = [];
     select.innerHTML = '';
 
@@ -1112,38 +1511,404 @@ function loadRuntimeFunctionOptions(contract) {
         option.value = '';
         select.appendChild(option);
         select.disabled = true;
-        runBtn.disabled = true;
+        refreshRuntimeActionButtons(false);
         return;
     }
 
     contract.functions.forEach((func) => {
         runtimeFunctionVariants.push({
             name: func.name,
-            serverVariant: Boolean(func.serverVariant)
+            serverVariant: Boolean(func.serverVariant),
+            functionInputs: Array.isArray(func.functionInputs) ? func.functionInputs : []
         });
         const option = document.createElement('option');
-        const variant = func.serverVariant ? 'cooperative' : 'exit';
         option.value = String(runtimeFunctionVariants.length - 1);
-        option.textContent = `${func.name} (${variant})`;
+        option.textContent = runtimeVariantLabel(runtimeFunctionVariants[runtimeFunctionVariants.length - 1]);
         select.appendChild(option);
     });
 
     select.disabled = false;
-    runBtn.disabled = false;
+    refreshRuntimeActionButtons(false);
+}
+
+function parseRuntimeContextJson() {
+    const raw = document.getElementById('runtime-context').value || '';
+    if (!raw.trim()) {
+        return null;
+    }
+    try {
+        const parsed = JSON.parse(raw);
+        return JSON.stringify(parsed);
+    } catch (err) {
+        throw new Error(`Invalid context JSON: ${err.message}`);
+    }
+}
+
+function applyRuntimeContextPreset() {
+    const presetId = document.getElementById('runtime-context-preset').value;
+    const contextEl = document.getElementById('runtime-context');
+    contextEl.value = RUNTIME_CONTEXT_PRESETS[presetId] ?? '';
+    saveRuntimeSettings();
+    resetRuntimeUI('Context preset applied. Execute to validate with this fixture.');
+}
+
+function runtimeExecutionConfigFromUI() {
+    return {
+        strictPlaceholders: Boolean(document.getElementById('runtime-strict').checked),
+        strictTypes: Boolean(document.getElementById('runtime-strict-types').checked),
+        strictBindings: Boolean(document.getElementById('runtime-strict-bindings').checked),
+        contextStrict: Boolean(document.getElementById('runtime-context-strict').checked),
+        contextJson: parseRuntimeContextJson(),
+        mode: document.getElementById('runtime-mode').value || 'development',
+    };
+}
+
+function executeRuntimeVariant(variant, bindingsJson, options) {
+    if (typeof wasmApi.execute_contract_json_advanced === 'function') {
+        return wasmApi.execute_contract_json_advanced(
+            lastCompiledArtifactJson,
+            variant.name,
+            variant.serverVariant,
+            bindingsJson,
+            options.strictPlaceholders,
+            options.strictTypes,
+            options.strictBindings,
+            options.contextJson,
+            options.contextStrict,
+            options.mode
+        );
+    }
+
+    if (
+        options.strictTypes
+        || options.strictBindings
+        || options.contextJson
+        || options.contextStrict
+        || options.mode !== 'development'
+    ) {
+        console.warn('Advanced runtime controls are unavailable in this WASM build; falling back to base runtime API.');
+    }
+
+    if (typeof wasmApi.execute_contract_json === 'function') {
+        return wasmApi.execute_contract_json(
+            lastCompiledArtifactJson,
+            variant.name,
+            variant.serverVariant,
+            bindingsJson,
+            options.strictPlaceholders
+        );
+    }
+
+    throw new Error('WASM package does not expose runtime API yet. Run ./playground/build.sh and reload.');
+}
+
+function runRuntimeVariantWithTiming(variant, bindingsJson, options) {
+    const started = performance.now();
+    const raw = executeRuntimeVariant(variant, bindingsJson, options);
+    const totalMs = performance.now() - started;
+    let runtimeJson;
+    try {
+        runtimeJson = JSON.parse(raw);
+    } catch (err) {
+        throw new Error(`Runtime returned invalid JSON: ${err.message}`);
+    }
+
+    return {
+        runtimeJson,
+        totalMs,
+    };
+}
+
+function runtimeOutcomeClass(runtimeJson) {
+    if (runtimeJson?.outcome === 'script_true') return 'ok';
+    if (runtimeJson?.outcome === 'script_false') return 'fail';
+    return 'error';
+}
+
+function inferPolicyStepCount(runtimeJson) {
+    const counters = runtimeJson?.policy_counters;
+    if (counters && typeof counters === 'object') {
+        const keys = ['steps', 'policy_steps', 'executed_steps', 'step_count', 'used_steps'];
+        for (const key of keys) {
+            const value = Number(counters[key]);
+            if (Number.isFinite(value)) {
+                return value;
+            }
+        }
+    }
+
+    const telemetry = Array.isArray(runtimeJson?.telemetry) ? runtimeJson.telemetry : [];
+    return telemetry.reduce((max, step) => {
+        const value = Number(step?.policy_steps);
+        if (!Number.isFinite(value)) return max;
+        return Math.max(max, value);
+    }, 0);
+}
+
+function matrixStatusCounters(rows) {
+    return rows.reduce((acc, row) => {
+        if (row.status === 'ok') acc.ok += 1;
+        else if (row.status === 'fail') acc.fail += 1;
+        else acc.error += 1;
+        return acc;
+    }, { ok: 0, fail: 0, error: 0 });
+}
+
+function beginRuntimeMatrixRender(totalCount) {
+    const summaryEl = document.getElementById('runtime-matrix-summary');
+    const tableEl = document.getElementById('runtime-matrix-table');
+    summaryEl.classList.add('running');
+    summaryEl.classList.remove('complete');
+    summaryEl.textContent = `Running matrix: 0/${totalCount} paths`;
+    tableEl.innerHTML = `<table>
+<thead>
+<tr>
+  <th>Path</th>
+  <th>Outcome</th>
+  <th>Steps</th>
+  <th>VM</th>
+  <th>Total</th>
+  <th>Error</th>
+</tr>
+</thead>
+<tbody id="runtime-matrix-body"></tbody>
+</table>`;
+}
+
+function appendRuntimeMatrixRows(rows, startIndex) {
+    const body = document.getElementById('runtime-matrix-body');
+    if (!body || startIndex >= rows.length) {
+        return startIndex;
+    }
+
+    const fragment = document.createDocumentFragment();
+    for (let idx = startIndex; idx < rows.length; idx++) {
+        const row = rows[idx];
+        const tr = document.createElement('tr');
+
+        const pathTd = document.createElement('td');
+        pathTd.textContent = row.label;
+        tr.appendChild(pathTd);
+
+        const outcomeTd = document.createElement('td');
+        const outcomePill = document.createElement('span');
+        outcomePill.className = `runtime-matrix-pill ${row.status}`;
+        outcomePill.textContent = row.outcome;
+        outcomeTd.appendChild(outcomePill);
+        tr.appendChild(outcomeTd);
+
+        const stepsTd = document.createElement('td');
+        stepsTd.textContent = String(row.steps);
+        tr.appendChild(stepsTd);
+
+        const vmTd = document.createElement('td');
+        vmTd.textContent = row.vmMs;
+        tr.appendChild(vmTd);
+
+        const totalTd = document.createElement('td');
+        totalTd.textContent = formatMs(row.totalMs);
+        tr.appendChild(totalTd);
+
+        const errorTd = document.createElement('td');
+        errorTd.textContent = row.error || '-';
+        tr.appendChild(errorTd);
+
+        fragment.appendChild(tr);
+    }
+
+    body.appendChild(fragment);
+    return rows.length;
+}
+
+function updateRuntimeMatrixSummary(rows, totalCount, elapsedMs, done = false) {
+    const summaryEl = document.getElementById('runtime-matrix-summary');
+    summaryEl.classList.toggle('running', !done);
+    summaryEl.classList.toggle('complete', done);
+    if (!rows.length && done) {
+        summaryEl.textContent = 'Run matrix to benchmark every function variant.';
+        return;
+    }
+
+    const counters = matrixStatusCounters(rows);
+    if (done) {
+        summaryEl.textContent = `${rows.length} paths in ${formatMs(elapsedMs)} - ${counters.ok} passed, ${counters.fail} script_false, ${counters.error} runtime_error`;
+        return;
+    }
+
+    summaryEl.textContent = `Running matrix: ${rows.length}/${totalCount} paths in ${formatMs(elapsedMs)} - ${counters.ok} passed, ${counters.fail} script_false, ${counters.error} runtime_error`;
+}
+
+function renderRuntimeStep() {
+    const stepLabel = document.getElementById('runtime-step-label');
+    const stepContainer = document.getElementById('runtime-step');
+    const prevBtn = document.getElementById('runtime-prev-step');
+    const nextBtn = document.getElementById('runtime-next-step');
+    const slider = document.getElementById('runtime-step-slider');
+
+    const entries = runtimeTraceView?.entries || [];
+    if (entries.length === 0) {
+        runtimeStepIndex = -1;
+        stepLabel.textContent = 'Step 0 / 0';
+        stepContainer.textContent = '';
+        prevBtn.disabled = true;
+        nextBtn.disabled = true;
+        slider.value = '0';
+        slider.max = '0';
+        slider.disabled = true;
+        return;
+    }
+
+    if (runtimeStepIndex < 0) {
+        runtimeStepIndex = 0;
+    }
+    if (runtimeStepIndex >= entries.length) {
+        runtimeStepIndex = entries.length - 1;
+    }
+
+    const entry = entries[runtimeStepIndex];
+    const step = entry.step;
+    if ((runtimeTraceView?.stride || 1) > 1) {
+        stepLabel.textContent = `Step ${runtimeStepIndex + 1} / ${entries.length} (actual ${entry.sourceIndex + 1} / ${runtimeTraceView.totalSteps})`;
+    } else {
+        stepLabel.textContent = `Step ${runtimeStepIndex + 1} / ${entries.length}`;
+    }
+    prevBtn.disabled = runtimeStepIndex === 0;
+    nextBtn.disabled = runtimeStepIndex >= entries.length - 1;
+    slider.disabled = false;
+    slider.max = String(entries.length - 1);
+    slider.value = String(runtimeStepIndex);
+
+    let before = runtimeTraceView.beforeCache[runtimeStepIndex];
+    if (!before) {
+        before = runtimeStackToText(step.stack_before, true);
+        runtimeTraceView.beforeCache[runtimeStepIndex] = before;
+    }
+    let after = runtimeTraceView.afterCache[runtimeStepIndex];
+    if (!after) {
+        after = runtimeStackToText(step.stack_after, true);
+        runtimeTraceView.afterCache[runtimeStepIndex] = after;
+    }
+
+    stepContainer.innerHTML = `
+<div class="runtime-step-meta">
+  <span>ip=${step.ip}</span>
+  <span>token=${escapeHtml(step.token)}</span>
+  <span>status=${escapeHtml(step.status)}</span>
+  <span>elapsed=${formatNanosAsMs(step.elapsed_nanos)}</span>
+  <span>policy_steps=${Number(step.policy_steps || 0)}</span>
+</div>
+<div class="runtime-step-stacks">
+  <div>
+    <h4>Stack Before</h4>
+    <pre>${escapeHtml(before)}</pre>
+  </div>
+  <div>
+    <h4>Stack After</h4>
+    <pre>${escapeHtml(after)}</pre>
+  </div>
+</div>`;
+}
+
+function renderRuntimeResult(runtimeJson, totalMs) {
+    const summaryEl = document.getElementById('runtime-summary');
+    summaryEl.classList.remove('success', 'error', 'stale');
+    summaryEl.classList.add(runtimeJson.outcome === 'runtime_error' ? 'error' : 'success');
+    markRuntimeFresh();
+    runtimeTraceView = buildRuntimeTraceView(runtimeJson);
+
+    const summaryLines = [];
+    let outcomeLine = `Outcome: ${runtimeJson.outcome}`;
+    if (runtimeJson.error_code) {
+        outcomeLine += ` (${runtimeJson.error_code})`;
+    }
+    summaryLines.push(outcomeLine);
+    if (runtimeJson.error_message) {
+        summaryLines.push(`Error: ${runtimeJson.error_message}`);
+    }
+    summaryLines.push(`Function: ${runtimeJson.function_name} | Variant: ${runtimeJson.server_variant ? 'cooperative' : 'exit'}`);
+    summaryLines.push(`Compile: ${formatMs(lastCompileDurationMs)} | Total: ${formatMs(totalMs)} | VM: ${formatNanosAsMs(runtimeJson.elapsed_nanos)}`);
+    summaryLines.push(`Steps: ${runtimeTraceView.totalSteps}`);
+    if (runtimeTraceView.stride > 1) {
+        summaryLines.push(`Trace View: sampled every ${runtimeTraceView.stride} steps for UI speed`);
+    }
+    summaryLines.push(`Trace: ${runtimeJson.trace_version || 'n/a'} / ${runtimeJson.trace_id || 'n/a'}`);
+    summaryEl.textContent = summaryLines.join('\n');
+
+    document.getElementById('runtime-main-stack').textContent = runtimeStackToText(runtimeJson.final_main_stack, true);
+    document.getElementById('runtime-alt-stack').textContent = runtimeStackToText(runtimeJson.final_alt_stack, true);
+    document.getElementById('runtime-metric-total-ms').textContent = formatMs(totalMs);
+    document.getElementById('runtime-metric-vm-ms').textContent = formatNanosAsMs(runtimeJson.elapsed_nanos);
+    document.getElementById('runtime-metric-steps').textContent = String(runtimeTraceView.totalSteps);
+    document.getElementById('runtime-metric-policy').textContent = String(inferPolicyStepCount(runtimeJson));
+
+    document.getElementById('runtime-trace').textContent = JSON.stringify({
+        trace_version: runtimeJson.trace_version,
+        trace_id: runtimeJson.trace_id,
+        seed: runtimeJson.seed ?? null,
+        contract_name: runtimeJson.contract_name,
+        function_name: runtimeJson.function_name,
+        server_variant: runtimeJson.server_variant,
+    }, null, 2);
+
+    document.getElementById('runtime-policy').textContent = JSON.stringify({
+        runtime_options: runtimeJson.runtime_options ?? {},
+        policy_counters: runtimeJson.policy_counters ?? {}
+    }, null, 2);
+
+    lastRuntimeResult = runtimeJson;
+    runtimeStepIndex = runtimeTraceView.entries.length ? 0 : -1;
+    renderRuntimeStep();
+}
+
+function showRuntimeError(title, err) {
+    lastRuntimeResult = null;
+    runtimeStepIndex = -1;
+    runtimeTraceView = null;
+    markRuntimeFresh();
+    const summaryEl = document.getElementById('runtime-summary');
+    summaryEl.classList.remove('success', 'stale');
+    summaryEl.classList.add('error');
+    summaryEl.textContent = `${title}:\n${err instanceof Error ? err.message : String(err)}`;
+    document.getElementById('runtime-step').textContent = '';
+    document.getElementById('runtime-main-stack').textContent = '';
+    document.getElementById('runtime-alt-stack').textContent = '';
+    document.getElementById('runtime-step-label').textContent = 'Step 0 / 0';
+    document.getElementById('runtime-prev-step').disabled = true;
+    document.getElementById('runtime-next-step').disabled = true;
+    const slider = document.getElementById('runtime-step-slider');
+    slider.value = '0';
+    slider.max = '0';
+    slider.disabled = true;
+    const matrixSummaryEl = document.getElementById('runtime-matrix-summary');
+    matrixSummaryEl.classList.remove('running');
+    matrixSummaryEl.classList.add('complete');
+    setRuntimeMetricDefaults();
+}
+
+function selectedRuntimeFunction() {
+    const select = document.getElementById('runtime-function');
+    if (!select || select.value === '') {
+        throw new Error('No runtime function selected');
+    }
+    const idx = Number.parseInt(select.value, 10);
+    if (!Number.isFinite(idx) || idx < 0 || idx >= runtimeFunctionVariants.length) {
+        throw new Error('Invalid runtime function selection');
+    }
+    return runtimeFunctionVariants[idx];
 }
 
 // Mark the editor as having uncompiled changes
 function markDirty() {
     const btn = document.getElementById('compile-btn');
-    // Re-trigger animation by removing and re-adding the class
     btn.classList.remove('compiled', 'needs-compile');
-    void btn.offsetWidth; // reflow to restart animation
+    void btn.offsetWidth;
     btn.classList.add('needs-compile');
 
     const statusEl = document.getElementById('compile-status');
     statusEl.textContent = '';
     statusEl.className = 'compile-status';
 
+    lastCompileDurationMs = 0;
     lastCompiledArtifactJson = null;
     loadRuntimeFunctionOptions(null);
     resetRuntimeUI('Source changed. Compile again before runtime execution.');
@@ -1158,34 +1923,55 @@ function markCompiled() {
 
 // Compile the source code
 function doCompile() {
-    if (!wasmReady || !editor) return;
+    if (!wasmReady || !editor) return false;
 
     const source = editor.getValue();
     clearErrors();
+    const started = performance.now();
 
     try {
         const result = wasmApi.compile(source);
         const parsed = JSON.parse(result);
+        lastCompileDurationMs = performance.now() - started;
         lastCompiledSource = source;
         lastCompiledArtifactJson = result;
         displayJson(result);
-        displayAsm(result);
-        showSuccess(result);
+        displayAsm(parsed);
+        showSuccess(parsed);
         markCompiled();
         loadRuntimeFunctionOptions(parsed);
+        fillBindingsTemplateForSelected(false);
         resetRuntimeUI('Compiled successfully. Select a function path and execute.');
+        return true;
     } catch (err) {
+        lastCompileDurationMs = 0;
         lastCompiledArtifactJson = null;
         loadRuntimeFunctionOptions(null);
         resetRuntimeUI('Compile a contract to enable runtime execution.');
         showError(err.toString());
+        return false;
     }
 }
 
 // Display JSON output
 function displayJson(jsonStr) {
     const container = document.getElementById('json-output');
-    container.innerHTML = syntaxHighlightJson(jsonStr);
+    if (jsonStr === jsonRenderCacheRaw && jsonRenderCacheHtml) {
+        container.innerHTML = jsonRenderCacheHtml;
+        return;
+    }
+
+    let html;
+    if (jsonStr.length > JSON_SYNTAX_HIGHLIGHT_LIMIT) {
+        const kb = (jsonStr.length / 1024).toFixed(1);
+        html = `<div class="output-render-note">Large artifact (${kb} KB). Syntax highlighting disabled for faster rendering.</div><pre class="plain-json">${escapeHtml(jsonStr)}</pre>`;
+    } else {
+        html = syntaxHighlightJson(jsonStr);
+    }
+
+    jsonRenderCacheRaw = jsonStr;
+    jsonRenderCacheHtml = html;
+    container.innerHTML = html;
 }
 
 // Syntax highlight JSON
@@ -1218,45 +2004,59 @@ function syntaxHighlightJson(json) {
 }
 
 // Display Assembly output
-function displayAsm(jsonStr) {
+function displayAsm(contract) {
     const container = document.getElementById('asm-output');
 
     try {
-        const data = JSON.parse(jsonStr);
-        let html = '';
+        const data = typeof contract === 'string' ? JSON.parse(contract) : contract;
+        const pieces = [];
 
         if (data.functions && data.functions.length > 0) {
             for (const func of data.functions) {
                 const variant = func.serverVariant ? 'Cooperative' : 'Exit';
-                html += `<span class="asm-function">${func.name} <span class="asm-variant">(${variant} path)</span></span>\n`;
+                pieces.push(`<span class="asm-function">${func.name} <span class="asm-variant">(${variant} path)</span></span>`);
 
                 if (func.asm) {
-                    html += highlightAsm(func.asm) + '\n\n';
+                    const tokenCount = Array.isArray(func.asm)
+                        ? func.asm.length
+                        : String(func.asm).trim().split(/\s+/).length;
+                    const disableHighlight = tokenCount > ASM_TOKEN_HIGHLIGHT_LIMIT;
+                    if (disableHighlight) {
+                        pieces.push(`<div class="output-render-note">Highlight skipped (${tokenCount} ASM tokens) for faster rendering.</div>`);
+                    }
+                    pieces.push(highlightAsm(func.asm, disableHighlight));
                 }
             }
         } else {
-            html = '<span class="comment">No functions compiled</span>';
+            pieces.push('<span class="comment">No functions compiled</span>');
         }
 
-        container.innerHTML = html;
+        container.innerHTML = pieces.join('\n\n');
     } catch (e) {
         container.textContent = 'Failed to parse assembly output';
     }
 }
 
 // Highlight assembly code
-function highlightAsm(asm) {
-    const tokens = Array.isArray(asm) ? asm : asm.split(' ');
-    return tokens
-        .map(token => {
-            if (token.startsWith('OP_')) {
-                return `<span class="asm-opcode">${token}</span>`;
-            } else if (token.startsWith('<') && token.endsWith('>')) {
-                return `<span class="asm-placeholder">${token}</span>`;
-            }
-            return token;
-        })
-        .join(' ');
+function highlightAsm(asm, disableHighlight = false) {
+    const tokens = Array.isArray(asm)
+        ? asm
+        : String(asm || '').trim().split(/\s+/).filter(Boolean);
+
+    if (disableHighlight) {
+        return `<span class="asm-plain">${escapeHtml(tokens.join(' '))}</span>`;
+    }
+
+    return tokens.map(token => {
+        const escaped = escapeHtml(token);
+        if (token.startsWith('OP_')) {
+            return `<span class="asm-opcode">${escaped}</span>`;
+        }
+        if (token.startsWith('<') && token.endsWith('>')) {
+            return `<span class="asm-placeholder">${escaped}</span>`;
+        }
+        return escaped;
+    }).join(' ');
 }
 
 function escapeHtml(text) {
@@ -1268,7 +2068,14 @@ function escapeHtml(text) {
         .replaceAll("'", '&#39;');
 }
 
-function formatRuntimeStackValue(value) {
+function compactMiddle(text, start, end) {
+    if (text.length <= start + end + 3) {
+        return text;
+    }
+    return `${text.slice(0, start)}...${text.slice(-end)}`;
+}
+
+function formatRuntimeStackValue(value, compact = false) {
     if (!value || typeof value !== 'object') {
         return String(value);
     }
@@ -1278,21 +2085,33 @@ function formatRuntimeStackValue(value) {
             return String(value.value);
         case 'bool':
             return value.value ? 'true' : 'false';
-        case 'bytes_hex':
-            return `0x${value.value}`;
-        case 'symbol':
-            return `<${value.value}>`;
-        default:
-            return JSON.stringify(value);
+        case 'bytes_hex': {
+            const hexValue = String(value.value || '');
+            if (compact && hexValue.length > 96) {
+                return `0x${compactMiddle(hexValue, 48, 16)} (${Math.floor(hexValue.length / 2)}b)`;
+            }
+            return `0x${hexValue}`;
+        }
+        case 'symbol': {
+            const symbol = String(value.value || '');
+            if (compact && symbol.length > 72) {
+                return `<${compactMiddle(symbol, 40, 20)}> (${symbol.length} chars)`;
+            }
+            return `<${symbol}>`;
+        }
+        default: {
+            const raw = JSON.stringify(value);
+            return compact && raw.length > 120 ? `${compactMiddle(raw, 72, 24)} (${raw.length} chars)` : raw;
+        }
     }
 }
 
-function runtimeStackToText(values) {
+function runtimeStackToText(values, compact = false) {
     if (!Array.isArray(values) || values.length === 0) {
         return '(empty)';
     }
     return values
-        .map((value, idx) => `${String(idx).padStart(3, '0')}: ${formatRuntimeStackValue(value)}`)
+        .map((value, idx) => `${String(idx).padStart(3, '0')}: ${formatRuntimeStackValue(value, compact)}`)
         .join('\n');
 }
 
@@ -1332,97 +2151,12 @@ function parseRuntimeBindings() {
     return out;
 }
 
-function renderRuntimeStep() {
-    const stepLabel = document.getElementById('runtime-step-label');
-    const stepContainer = document.getElementById('runtime-step');
-    const prevBtn = document.getElementById('runtime-prev-step');
-    const nextBtn = document.getElementById('runtime-next-step');
-
-    const telemetry = lastRuntimeResult?.telemetry || [];
-    if (telemetry.length === 0) {
-        runtimeStepIndex = -1;
-        stepLabel.textContent = 'Step 0 / 0';
-        stepContainer.textContent = '';
-        prevBtn.disabled = true;
-        nextBtn.disabled = true;
-        return;
-    }
-
-    if (runtimeStepIndex < 0) {
-        runtimeStepIndex = 0;
-    }
-    if (runtimeStepIndex >= telemetry.length) {
-        runtimeStepIndex = telemetry.length - 1;
-    }
-
-    const step = telemetry[runtimeStepIndex];
-    stepLabel.textContent = `Step ${runtimeStepIndex + 1} / ${telemetry.length}`;
-    prevBtn.disabled = runtimeStepIndex === 0;
-    nextBtn.disabled = runtimeStepIndex >= telemetry.length - 1;
-
-    const before = runtimeStackToText(step.stack_before);
-    const after = runtimeStackToText(step.stack_after);
-
-    stepContainer.innerHTML = `
-<div class="runtime-step-meta">
-  <span>ip=${step.ip}</span>
-  <span>token=${escapeHtml(step.token)}</span>
-  <span>status=${step.status}</span>
-</div>
-<div class="runtime-step-stacks">
-  <div>
-    <h4>Stack Before</h4>
-    <pre>${escapeHtml(before)}</pre>
-  </div>
-  <div>
-    <h4>Stack After</h4>
-    <pre>${escapeHtml(after)}</pre>
-  </div>
-</div>`;
-}
-
-function renderRuntimeResult(runtimeJson) {
-    const summaryEl = document.getElementById('runtime-summary');
-    summaryEl.classList.remove('success', 'error');
-    summaryEl.classList.add(runtimeJson.outcome === 'runtime_error' ? 'error' : 'success');
-
-    let summary = `Outcome: ${runtimeJson.outcome}`;
-    if (runtimeJson.error_code) {
-        summary += ` (${runtimeJson.error_code})`;
-    }
-    if (runtimeJson.error_message) {
-        summary += `\n${runtimeJson.error_message}`;
-    }
-    summary += `\nFunction: ${runtimeJson.function_name} | Variant: ${runtimeJson.server_variant ? 'cooperative' : 'exit'}`;
-    summary += `\nSteps: ${runtimeJson.telemetry?.length || 0}`;
-    summaryEl.textContent = summary;
-
-    document.getElementById('runtime-main-stack').textContent = runtimeStackToText(runtimeJson.final_main_stack);
-    document.getElementById('runtime-alt-stack').textContent = runtimeStackToText(runtimeJson.final_alt_stack);
-
-    lastRuntimeResult = runtimeJson;
-    runtimeStepIndex = runtimeJson.telemetry?.length ? 0 : -1;
-    renderRuntimeStep();
-}
-
-function selectedRuntimeFunction() {
-    const select = document.getElementById('runtime-function');
-    if (!select || select.value === '') {
-        throw new Error('No runtime function selected');
-    }
-    const idx = Number.parseInt(select.value, 10);
-    if (!Number.isFinite(idx) || idx < 0 || idx >= runtimeFunctionVariants.length) {
-        throw new Error('Invalid runtime function selection');
-    }
-    return runtimeFunctionVariants[idx];
-}
-
 function ensureRuntimeArtifactIsFresh() {
     if (!editor) {
         return false;
     }
     if (editor.getValue() !== lastCompiledSource || !lastCompiledArtifactJson) {
-        doCompile();
+        return doCompile();
     }
     return Boolean(lastCompiledArtifactJson);
 }
@@ -1433,41 +2167,131 @@ function runRuntime() {
     }
 
     try {
+        cancelRuntimeMatrixRun();
         const fn = selectedRuntimeFunction();
-        const strict = document.getElementById('runtime-strict').checked;
-        const bindings = parseRuntimeBindings();
-        if (typeof wasmApi.execute_contract_json !== 'function') {
-            throw new Error(
-                'WASM package does not expose runtime API yet. Run ./playground/build.sh and reload.'
-            );
-        }
-        const runtimeJson = wasmApi.execute_contract_json(
-            lastCompiledArtifactJson,
-            fn.name,
-            fn.serverVariant,
-            JSON.stringify(bindings),
-            strict
-        );
-        renderRuntimeResult(JSON.parse(runtimeJson));
+        const bindingsJson = JSON.stringify(parseRuntimeBindings());
+        const options = runtimeExecutionConfigFromUI();
+        saveRuntimeSettings();
+        setRuntimeBusy(true, 'single');
+        const { runtimeJson, totalMs } = runRuntimeVariantWithTiming(fn, bindingsJson, options);
+        renderRuntimeResult(runtimeJson, totalMs);
         switchTab('runtime');
     } catch (err) {
-        const summaryEl = document.getElementById('runtime-summary');
-        summaryEl.classList.remove('success');
-        summaryEl.classList.add('error');
-        summaryEl.textContent = `Runtime execution failed:\n${err}`;
+        showRuntimeError('Runtime execution failed', err);
+    } finally {
+        setRuntimeBusy(false);
+    }
+}
+
+async function runRuntimeMatrix() {
+    if (!wasmReady || !ensureRuntimeArtifactIsFresh()) {
+        return;
+    }
+    if (!runtimeFunctionVariants.length) {
+        showRuntimeError('Runtime matrix failed', new Error('No function variants available'));
+        return;
+    }
+
+    const runId = ++activeMatrixRunId;
+    try {
+        const options = runtimeExecutionConfigFromUI();
+        const bindingsJson = JSON.stringify(parseRuntimeBindings());
+        saveRuntimeSettings();
+        setRuntimeBusy(true, 'matrix');
+
+        beginRuntimeMatrixRender(runtimeFunctionVariants.length);
+        const matrixStarted = performance.now();
+        const rows = [];
+        lastRuntimeMatrixResults = [];
+        let renderedRows = 0;
+        let lastSummaryUpdate = matrixStarted;
+        let lastYield = matrixStarted;
+
+        for (let index = 0; index < runtimeFunctionVariants.length; index++) {
+            if (runId !== activeMatrixRunId) {
+                lastRuntimeMatrixResults = rows.slice();
+                return;
+            }
+            const variant = runtimeFunctionVariants[index];
+            try {
+                const { runtimeJson, totalMs } = runRuntimeVariantWithTiming(variant, bindingsJson, options);
+                rows.push({
+                    label: runtimeVariantLabel(variant),
+                    outcome: runtimeJson.outcome,
+                    status: runtimeOutcomeClass(runtimeJson),
+                    steps: runtimeJson.telemetry?.length || 0,
+                    vmMs: formatNanosAsMs(runtimeJson.elapsed_nanos),
+                    totalMs,
+                    error: runtimeJson.error_message || runtimeJson.error_code || '',
+                    runtimeJson,
+                });
+            } catch (err) {
+                rows.push({
+                    label: runtimeVariantLabel(variant),
+                    outcome: 'runtime_error',
+                    status: 'error',
+                    steps: 0,
+                    vmMs: '0.00 ms',
+                    totalMs: 0,
+                    error: err instanceof Error ? err.message : String(err),
+                    runtimeJson: null,
+                });
+            }
+
+            if ((rows.length - renderedRows) >= MATRIX_RENDER_BATCH_SIZE) {
+                renderedRows = appendRuntimeMatrixRows(rows, renderedRows);
+                lastRuntimeMatrixResults = rows.slice();
+            }
+
+            const now = performance.now();
+            if ((now - lastSummaryUpdate) >= MATRIX_PROGRESS_INTERVAL_MS || index === runtimeFunctionVariants.length - 1) {
+                updateRuntimeMatrixSummary(rows, runtimeFunctionVariants.length, now - matrixStarted, false);
+                lastSummaryUpdate = now;
+            }
+            if ((now - lastYield) >= MATRIX_YIELD_INTERVAL_MS) {
+                await waitForNextFrame();
+                lastYield = performance.now();
+            }
+        }
+
+        renderedRows = appendRuntimeMatrixRows(rows, renderedRows);
+        const matrixTotalMs = performance.now() - matrixStarted;
+        lastRuntimeMatrixResults = rows.slice();
+        updateRuntimeMatrixSummary(rows, runtimeFunctionVariants.length, matrixTotalMs, true);
+
+        if (runId !== activeMatrixRunId) {
+            return;
+        }
+
+        const selected = selectedRuntimeFunction();
+        const focused = rows.find((row) => row.label === runtimeVariantLabel(selected) && row.runtimeJson)
+            || rows.find((row) => row.runtimeJson);
+        if (focused?.runtimeJson) {
+            renderRuntimeResult(focused.runtimeJson, focused.totalMs);
+        } else {
+            showRuntimeError('Runtime matrix failed', new Error('All variants failed to execute'));
+        }
+        switchTab('runtime');
+    } catch (err) {
+        showRuntimeError('Runtime matrix failed', err);
+    } finally {
+        if (runId === activeMatrixRunId) {
+            setRuntimeBusy(false);
+        }
     }
 }
 
 // Show compilation success
-function showSuccess(jsonStr) {
+function showSuccess(contract) {
     const statusEl = document.getElementById('compile-status');
-    let funcCount = '';
+    let funcCount = 0;
     try {
-        const data = JSON.parse(jsonStr);
-        const count = data.functions?.length || 0;
-        funcCount = ` &mdash; ${count} function${count !== 1 ? 's' : ''}`;
-    } catch (e) {}
-    statusEl.innerHTML = `<i class="fas fa-check-circle"></i> Compiled${funcCount}`;
+        const data = typeof contract === 'string' ? JSON.parse(contract) : contract;
+        funcCount = data.functions?.length || 0;
+    } catch (e) {
+        funcCount = 0;
+    }
+    statusEl.innerHTML = `<i class="fas fa-check-circle"></i> Compiled &middot; ${funcCount} function${funcCount !== 1 ? 's' : ''} &middot; ${formatMs(lastCompileDurationMs)}`;
     statusEl.className = 'compile-status success';
 }
 
@@ -1531,7 +2355,19 @@ async function copyOutput() {
 
     let text = activeTab.textContent;
     if (activeTab.id === 'runtime-output' && lastRuntimeResult) {
-        text = JSON.stringify(lastRuntimeResult, null, 2);
+        const matrix = lastRuntimeMatrixResults.map((row) => ({
+            path: row.label,
+            outcome: row.outcome,
+            status: row.status,
+            steps: row.steps,
+            vm: row.vmMs,
+            total_ms: Number(row.totalMs.toFixed(2)),
+            error: row.error || null,
+        }));
+        text = JSON.stringify({
+            selected_run: lastRuntimeResult,
+            matrix,
+        }, null, 2);
     }
     try {
         await navigator.clipboard.writeText(text);
@@ -1627,9 +2463,9 @@ document.addEventListener('DOMContentLoaded', () => {
     renderFileTree();
 
     // Set initial file state
-    currentFile = 'single_sig';
-    openTabs.push({ id: 'single_sig', project: null, file: 'single_sig', name: 'SingleSig.ark' });
-    fileContents['single_sig'] = examples.single_sig.code;
+    currentFile = 'runtime_demo';
+    openTabs.push({ id: 'runtime_demo', project: null, file: 'runtime_demo', name: 'RuntimeDemo.ark' });
+    fileContents['runtime_demo'] = examples.runtime_demo.code;
     updateFileTabs();
 
     // Initialize Monaco
@@ -1647,6 +2483,8 @@ document.addEventListener('DOMContentLoaded', () => {
     // Compile button
     document.getElementById('compile-btn').addEventListener('click', doCompile);
     document.getElementById('runtime-run-btn').addEventListener('click', runRuntime);
+    document.getElementById('runtime-run-matrix-btn').addEventListener('click', runRuntimeMatrix);
+    document.getElementById('runtime-stop-matrix-btn').addEventListener('click', stopRuntimeMatrix);
     document.getElementById('runtime-prev-step').addEventListener('click', () => {
         if (!lastRuntimeResult) return;
         runtimeStepIndex = Math.max(0, runtimeStepIndex - 1);
@@ -1657,16 +2495,62 @@ document.addEventListener('DOMContentLoaded', () => {
         runtimeStepIndex = Math.min(lastRuntimeResult.telemetry.length - 1, runtimeStepIndex + 1);
         renderRuntimeStep();
     });
-    document.getElementById('runtime-function').addEventListener('change', () => {
+    document.getElementById('runtime-step-slider').addEventListener('input', (e) => {
         if (!lastRuntimeResult) return;
-        resetRuntimeUI('Function changed. Execute to refresh runtime results.');
+        const value = Number.parseInt(e.target.value, 10);
+        if (!Number.isFinite(value)) return;
+        runtimeStepIndex = value;
+        renderRuntimeStep();
     });
+    document.getElementById('runtime-function').addEventListener('change', () => {
+        fillBindingsTemplateForSelected(false);
+        invalidateRuntimeResult('Function changed. Execute to refresh runtime results.');
+        saveRuntimeSettings();
+    });
+    document.getElementById('runtime-fill-bindings-btn').addEventListener('click', () => {
+        fillBindingsTemplateForSelected(true);
+        invalidateRuntimeResult('Bindings template refreshed. Execute to validate.');
+    });
+    document.getElementById('runtime-apply-context-preset').addEventListener('click', applyRuntimeContextPreset);
+
+    ['runtime-mode', 'runtime-strict', 'runtime-strict-types', 'runtime-strict-bindings', 'runtime-context-strict']
+        .forEach((id) => {
+            const el = document.getElementById(id);
+            el.addEventListener('change', () => {
+                saveRuntimeSettings();
+                invalidateRuntimeResult('Runtime options changed. Execute again to refresh diagnostics.');
+            });
+        });
+
+    ['runtime-bindings', 'runtime-context']
+        .forEach((id) => {
+            const el = document.getElementById(id);
+            el.addEventListener('input', () => {
+                saveRuntimeSettings();
+                invalidateRuntimeResult('Runtime inputs changed. Execute again with updated values.');
+            });
+        });
 
     // Cmd/Ctrl+S → compile (prevent browser save dialog)
     document.addEventListener('keydown', (e) => {
         if ((e.metaKey || e.ctrlKey) && e.key === 's') {
             e.preventDefault();
             doCompile();
+            return;
+        }
+
+        const runtimeTabActive = document.querySelector('.tab.active')?.dataset.tab === 'runtime';
+        const activeTag = document.activeElement?.tagName?.toLowerCase();
+        const isInputFocused = activeTag === 'textarea' || activeTag === 'input' || activeTag === 'select';
+        if (!runtimeTabActive || isInputFocused || !lastRuntimeResult) {
+            return;
+        }
+        if (e.key === 'ArrowLeft') {
+            runtimeStepIndex = Math.max(0, runtimeStepIndex - 1);
+            renderRuntimeStep();
+        } else if (e.key === 'ArrowRight') {
+            runtimeStepIndex = Math.min(lastRuntimeResult.telemetry.length - 1, runtimeStepIndex + 1);
+            renderRuntimeStep();
         }
     });
 
@@ -1680,6 +2564,7 @@ document.addEventListener('DOMContentLoaded', () => {
     document.getElementById('new-file-btn').addEventListener('click', promptNewStandaloneFile);
     document.getElementById('new-folder-btn').addEventListener('click', promptNewFolder);
 
+    applyRuntimeSettings(loadRuntimeSettings());
     loadRuntimeFunctionOptions(null);
     resetRuntimeUI('Compile a contract to enable runtime execution.');
 

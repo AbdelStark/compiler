@@ -1,3 +1,4 @@
+#[cfg(not(target_arch = "wasm32"))]
 use std::time::Instant;
 
 use sha2::{Digest, Sha256};
@@ -11,6 +12,24 @@ use crate::runtime::telemetry::{
     PolicyCounters, RuntimeOptionsSnapshot, StepStatus, StepTelemetry,
 };
 use crate::runtime::value::StackValue;
+
+#[cfg(not(target_arch = "wasm32"))]
+fn timing_start() -> Instant {
+    Instant::now()
+}
+
+#[cfg(target_arch = "wasm32")]
+fn timing_start() {}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn timing_elapsed_nanos(started: &Instant) -> u64 {
+    started.elapsed().as_nanos() as u64
+}
+
+#[cfg(target_arch = "wasm32")]
+fn timing_elapsed_nanos(_started: &()) -> u64 {
+    0
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum VmOutcome {
@@ -93,7 +112,7 @@ impl VMState {
             "vm.run started"
         );
 
-        let started = Instant::now();
+        let started = timing_start();
 
         if let Some(max_script_len) = env.runtime_policy.max_script_len {
             if self.script.len() > max_script_len {
@@ -131,7 +150,7 @@ impl VMState {
             "vm.run finished"
         );
 
-        self.build_run_result(env, outcome, started.elapsed().as_nanos() as u64)
+        self.build_run_result(env, outcome, timing_elapsed_nanos(&started))
     }
 
     pub fn step(&mut self, env: &ExecutionEnv) -> Result<(), RuntimeError> {
@@ -156,7 +175,7 @@ impl VMState {
         let ip_before = self.ip;
         let token = self.script[self.ip].clone();
         let stack_before = self.stack.snapshot_main();
-        let step_started = Instant::now();
+        let step_started = timing_start();
         let mut status = StepStatus::Continue;
 
         if token.starts_with("OP_") {
@@ -286,7 +305,7 @@ impl VMState {
             step_id: self.policy_counters.steps,
             ip: ip_before,
             token: token.clone(),
-            elapsed_nanos: step_started.elapsed().as_nanos() as u64,
+            elapsed_nanos: timing_elapsed_nanos(&step_started),
             stack_before: stack_before.clone(),
             stack_after: stack_after.clone(),
             status: status.clone(),
