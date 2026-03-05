@@ -18,7 +18,7 @@ use crate::models::{AbiFunction, ContractJson};
 use crate::runtime::env::{stack_value_to_bytes, ExecutionEnv, TxContext};
 use crate::runtime::error::{RuntimeError, RuntimeErrorCode};
 use crate::runtime::value::StackValue;
-use crate::runtime::vm::{VMState, VmRunResult};
+use crate::runtime::vm::{VMState, VmOutcome, VmRunResult};
 
 #[derive(Debug, Clone)]
 pub struct LoadedProgram {
@@ -79,20 +79,28 @@ pub fn load_program_from_contract(
 }
 
 pub fn execute_program(program: &LoadedProgram, env: &ExecutionEnv) -> VmRunResult {
+    if let Err(err) = validate_execution_env(program, env) {
+        let mut vm = VMState::new(program.asm.clone());
+        vm.halted = true;
+        vm.result = Some(VmOutcome::RuntimeError(err));
+        return vm.run(env);
+    }
+
     let mut vm = VMState::new(program.asm.clone());
     vm.run(env)
 }
 
 pub fn default_bindings_for_program(program: &LoadedProgram) -> HashMap<String, StackValue> {
-    let mut bindings: HashMap<String, StackValue> = HashMap::new();
-    let tx_context = TxContext::default();
+    default_bindings_for_program_with_context(program, &TxContext::default())
+}
 
-    let mut placeholders: HashSet<String> = HashSet::new();
-    for token in &program.asm {
-        if let Some(name) = parse_placeholder(token) {
-            placeholders.insert(name.to_string());
-        }
-    }
+pub fn default_bindings_for_program_with_context(
+    program: &LoadedProgram,
+    tx_context: &TxContext,
+) -> HashMap<String, StackValue> {
+    let mut bindings: HashMap<String, StackValue> = HashMap::new();
+
+    let placeholders = placeholders_for_program(program);
 
     for name in &placeholders {
         if let Some(param_type) = program.param_types.get(name) {
@@ -116,7 +124,13 @@ pub fn default_bindings_for_program(program: &LoadedProgram) -> HashMap<String, 
             let idx = hash_to_index(name, tx_context.asset_groups.len());
             bindings.insert(
                 name.clone(),
-                StackValue::Bytes(tx_context.asset_groups[idx].txid.clone()),
+                StackValue::Bytes(
+                    tx_context
+                        .asset_groups
+                        .get(idx)
+                        .map(|group| group.txid.clone())
+                        .unwrap_or_else(|| tx_context.tx_hash.clone()),
+                ),
             );
             continue;
         }
@@ -125,7 +139,13 @@ pub fn default_bindings_for_program(program: &LoadedProgram) -> HashMap<String, 
             let idx = hash_to_index(name, tx_context.asset_groups.len());
             bindings.insert(
                 name.clone(),
-                StackValue::Int(tx_context.asset_groups[idx].gidx as i64),
+                StackValue::Int(
+                    tx_context
+                        .asset_groups
+                        .get(idx)
+                        .map(|group| group.gidx as i64)
+                        .unwrap_or(0),
+                ),
             );
             continue;
         }
@@ -154,7 +174,7 @@ pub fn default_bindings_for_program(program: &LoadedProgram) -> HashMap<String, 
             .and_then(|m| bindings.get(m).map(stack_value_to_bytes))
             .unwrap_or_else(|| tx_context.tx_hash.clone());
 
-        let signature = ExecutionEnv::sign_message_for_label(pk, &message);
+        let signature = ExecutionEnv::sign_message_for_label_with_template(pk, &message, None);
         bindings.insert(sig.clone(), StackValue::Bytes(signature));
     }
 
@@ -169,13 +189,84 @@ pub fn default_bindings_for_program(program: &LoadedProgram) -> HashMap<String, 
         bindings.insert("hash".to_string(), StackValue::Bytes(digest.to_vec()));
     }
 
-    for value in bindings.values_mut() {
-        if matches!(value, StackValue::Symbol(_)) {
-            *value = StackValue::Int(0);
+    bindings
+}
+
+pub fn placeholders_for_program(program: &LoadedProgram) -> HashSet<String> {
+    let mut placeholders: HashSet<String> = HashSet::new();
+    for token in &program.asm {
+        if let Some(name) = parse_placeholder(token) {
+            placeholders.insert(name.to_string());
+        }
+    }
+    placeholders
+}
+
+pub fn validate_execution_env(
+    program: &LoadedProgram,
+    env: &ExecutionEnv,
+) -> Result<(), RuntimeError> {
+    if !env.strict_bindings {
+        return Ok(());
+    }
+
+    let placeholders = placeholders_for_program(program);
+    let mut missing: Vec<String> = placeholders
+        .iter()
+        .filter(|name| !env.bindings.contains_key(*name))
+        .cloned()
+        .collect();
+    missing.sort();
+    if !missing.is_empty() {
+        return Err(RuntimeError::new(
+            RuntimeErrorCode::MissingBinding,
+            format!(
+                "strict_bindings: missing placeholder bindings: {}",
+                missing.join(", ")
+            ),
+        ));
+    }
+
+    let mut type_errors = Vec::new();
+    for (name, param_type) in &program.param_types {
+        if !placeholders.contains(name) {
+            continue;
+        }
+        let Some(value) = env.bindings.get(name) else {
+            continue;
+        };
+
+        if !binding_matches_type(value, param_type) {
+            type_errors.push(format!(
+                "{name} expected type '{param_type}' but got {:?}",
+                value
+            ));
         }
     }
 
-    bindings
+    if !type_errors.is_empty() {
+        type_errors.sort();
+        return Err(RuntimeError::new(
+            RuntimeErrorCode::InvalidBinding,
+            format!("strict_bindings type errors: {}", type_errors.join("; ")),
+        ));
+    }
+
+    Ok(())
+}
+
+fn binding_matches_type(value: &StackValue, param_type: &str) -> bool {
+    match param_type {
+        "pubkey" => matches!(value, StackValue::Bytes(v) if v.len() == 33 || v.len() == 65),
+        "signature" => matches!(value, StackValue::Bytes(v) if !v.is_empty()),
+        "bytes32" => matches!(value, StackValue::Bytes(v) if v.len() == 32),
+        "bytes20" => matches!(value, StackValue::Bytes(v) if v.len() == 20),
+        "bytes" => matches!(value, StackValue::Bytes(_)),
+        "int" | "value" => matches!(value, StackValue::Int(_)),
+        "bool" => matches!(value, StackValue::Bool(_)),
+        "asset" => matches!(value, StackValue::Bytes(_) | StackValue::Symbol(_)),
+        _ => true,
+    }
 }
 
 fn select_function<'a>(

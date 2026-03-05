@@ -1,6 +1,7 @@
 use crate::runtime::error::{RuntimeError, RuntimeErrorCode};
+use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum StackValue {
     Int(i64),
     Bool(bool),
@@ -10,9 +11,21 @@ pub enum StackValue {
 
 impl StackValue {
     pub fn as_i64(&self) -> Result<i64, RuntimeError> {
+        self.as_i64_with_strict(false)
+    }
+
+    pub fn as_i64_with_strict(&self, strict_types: bool) -> Result<i64, RuntimeError> {
         match self {
             Self::Int(v) => Ok(*v),
-            Self::Bool(v) => Ok(if *v { 1 } else { 0 }),
+            Self::Bool(v) => {
+                if strict_types {
+                    return Err(RuntimeError::new(
+                        RuntimeErrorCode::InvalidNumericEncoding,
+                        "strict_types: bool cannot be coerced to i64",
+                    ));
+                }
+                Ok(if *v { 1 } else { 0 })
+            }
             Self::Symbol(v) => v.parse::<i64>().map_err(|_| {
                 RuntimeError::new(
                     RuntimeErrorCode::InvalidNumericEncoding,
@@ -20,6 +33,12 @@ impl StackValue {
                 )
             }),
             Self::Bytes(v) => {
+                if strict_types {
+                    return Err(RuntimeError::new(
+                        RuntimeErrorCode::InvalidNumericEncoding,
+                        "strict_types: byte buffer cannot be coerced to i64",
+                    ));
+                }
                 if v.is_empty() {
                     return Ok(0);
                 }
@@ -38,11 +57,37 @@ impl StackValue {
     }
 
     pub fn as_bool(&self) -> Result<bool, RuntimeError> {
+        self.as_bool_with_strict(false)
+    }
+
+    pub fn as_bool_with_strict(&self, strict_types: bool) -> Result<bool, RuntimeError> {
         match self {
             Self::Bool(v) => Ok(*v),
-            Self::Int(v) => Ok(*v != 0),
-            Self::Bytes(v) => Ok(v.iter().any(|b| *b != 0)),
+            Self::Int(v) => {
+                if strict_types {
+                    return Err(RuntimeError::new(
+                        RuntimeErrorCode::InvalidBooleanEncoding,
+                        "strict_types: i64 cannot be coerced to bool",
+                    ));
+                }
+                Ok(*v != 0)
+            }
+            Self::Bytes(v) => {
+                if strict_types {
+                    return Err(RuntimeError::new(
+                        RuntimeErrorCode::InvalidBooleanEncoding,
+                        "strict_types: byte buffer cannot be coerced to bool",
+                    ));
+                }
+                Ok(v.iter().any(|b| *b != 0))
+            }
             Self::Symbol(v) => {
+                if strict_types {
+                    return Err(RuntimeError::new(
+                        RuntimeErrorCode::InvalidBooleanEncoding,
+                        "strict_types: symbol cannot be coerced to bool",
+                    ));
+                }
                 if v.eq_ignore_ascii_case("true") {
                     Ok(true)
                 } else {

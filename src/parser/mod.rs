@@ -272,7 +272,13 @@ fn parse_function_body(func: &mut Function, pair: Pair<Rule>) -> Result<(), Stri
             Ok(())
         }
         Rule::function_call_stmt => {
-            // Function calls to internal helpers — not yet fully supported
+            let call = pair
+                .as_str()
+                .trim()
+                .trim_end_matches(';')
+                .trim()
+                .to_string();
+            func.statements.push(Statement::FunctionCall { call });
             Ok(())
         }
         Rule::variable_declaration => {
@@ -482,6 +488,8 @@ fn parse_primary_expr(pair: Pair<Rule>) -> Result<Expression, String> {
         Rule::tx_introspection => parse_tx_introspection_to_expression(pair),
         Rule::constructor => Ok(Expression::Property(pair.as_str().to_string())),
         Rule::function_call => Ok(Expression::Property(pair.as_str().to_string())),
+        Rule::array_index_access => parse_array_index_access(pair),
+        Rule::array_length_access => parse_array_length_access(pair),
         Rule::additive_expr => parse_additive_expr(pair),
         Rule::multiplicative_expr => parse_multiplicative_expr(pair),
         _ => {
@@ -1704,6 +1712,38 @@ fn parse_check_sig_from_stack_verify_expr(pair: Pair<Rule>) -> Result<Expression
 }
 
 // ─── Helper Functions ──────────────────────────────────────────────────────────
+
+fn parse_array_index_access(pair: Pair<Rule>) -> Result<Expression, String> {
+    let mut inner = pair.into_inner();
+    let array = inner
+        .next()
+        .ok_or("Missing array identifier in array index access")?
+        .as_str()
+        .to_string();
+    let index_pair = inner
+        .next()
+        .ok_or("Missing index expression in array index access")?;
+    let index = match index_pair.as_rule() {
+        Rule::number_literal => Expression::Literal(index_pair.as_str().to_string()),
+        Rule::identifier => Expression::Variable(index_pair.as_str().to_string()),
+        _ => Expression::Property(index_pair.as_str().to_string()),
+    };
+
+    Ok(Expression::ArrayIndex {
+        array: Box::new(Expression::Variable(array)),
+        index: Box::new(index),
+    })
+}
+
+fn parse_array_length_access(pair: Pair<Rule>) -> Result<Expression, String> {
+    let mut inner = pair.into_inner();
+    let array = inner
+        .next()
+        .ok_or("Missing array identifier in array length access")?
+        .as_str()
+        .to_string();
+    Ok(Expression::ArrayLength(array))
+}
 
 /// Parse tx_property_access into the appropriate Expression type
 /// Handles special patterns like tx.assetGroups[idx].sumInputs/sumOutputs

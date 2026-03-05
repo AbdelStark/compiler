@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
 use std::fs;
 use std::io::{self, Write};
 use std::path::Path;
@@ -6,24 +6,8 @@ use std::path::Path;
 use anyhow::{Context, Result};
 use arkade_compiler::{compiler, models, runtime};
 use clap::{Parser as ClapParser, Subcommand};
+use serde::Serialize;
 use tracing_subscriber::EnvFilter;
-
-/// Arkade Compiler CLI
-///
-/// This is the command-line interface for the Arkade Compiler.
-/// It compiles Arkade Script source code (.ark files) into JSON output
-/// that represents Bitcoin Taproot scripts.
-///
-/// The JSON output includes:
-/// - Contract name
-/// - Parameters
-/// - Server key placeholder
-/// - Script paths for each function
-///
-/// Each script path includes a serverVariant flag. When using the script:
-/// - If serverVariant is true, use the script as-is
-/// - If serverVariant is false, libraries should add an exit delay timelock
-///   (default 48 hours) for additional security
 
 #[derive(ClapParser, Debug)]
 #[command(name = "arkadec")]
@@ -52,10 +36,13 @@ enum Command {
     /// Execute artifact JSON in-process
     Run {
         file: String,
+        #[arg(
+            long,
+            required_unless_present_any = ["matrix", "list_functions", "dump_default_context"]
+        )]
+        function: Option<String>,
         #[arg(long)]
-        function: String,
-        #[arg(long, default_value = "false")]
-        variant: String,
+        variant: Option<String>,
         /// Bindings in the form key=value (repeatable). value can be:
         /// - int (42)
         /// - bool (true/false)
@@ -63,10 +50,63 @@ enum Command {
         /// - symbol (raw string)
         #[arg(long = "bind")]
         bind: Vec<String>,
+        /// JSON file containing bindings object
+        #[arg(long = "bind-file")]
+        bind_file: Option<String>,
         #[arg(long, default_value_t = false)]
         trace: bool,
+        /// Strict placeholder resolution
         #[arg(long, default_value_t = false)]
         strict: bool,
+        /// Strict runtime type coercion (no loose as_i64/as_bool conversions)
+        #[arg(long, default_value_t = false)]
+        strict_types: bool,
+        /// Strict schema validation for bindings before execution
+        #[arg(long, default_value_t = false)]
+        strict_bindings: bool,
+        /// Output format: plain | json | metrics
+        #[arg(long, default_value = "plain")]
+        output: String,
+        /// Context fixture file path
+        #[arg(long)]
+        context_file: Option<String>,
+        /// Context fixture as raw JSON string
+        #[arg(long)]
+        context_json: Option<String>,
+        /// Reject unknown fields in context JSON
+        #[arg(long, default_value_t = false)]
+        context_strict: bool,
+        /// Print available function variants and exit
+        #[arg(long, default_value_t = false)]
+        list_functions: bool,
+        /// Print default synthetic context JSON and exit
+        #[arg(long, default_value_t = false)]
+        dump_default_context: bool,
+        /// Include elapsed timings in output
+        #[arg(long, default_value_t = false)]
+        profile: bool,
+        /// Execute all contract functions/variants in one run
+        #[arg(long, default_value_t = false)]
+        matrix: bool,
+        /// Execution mode preset: development | simulation | ci | safety
+        #[arg(long, default_value = "development")]
+        mode: String,
+        #[arg(long)]
+        max_steps: Option<usize>,
+        #[arg(long)]
+        max_script_len: Option<usize>,
+        #[arg(long)]
+        max_main_stack_depth: Option<usize>,
+        #[arg(long)]
+        max_alt_stack_depth: Option<usize>,
+        #[arg(long)]
+        max_stack_growth_per_step: Option<usize>,
+        #[arg(long)]
+        max_opcode_budget: Option<usize>,
+        #[arg(long = "allow-opcode")]
+        allow_opcode: Vec<String>,
+        #[arg(long)]
+        seed: Option<u64>,
     },
     /// Launch TUI debugger for artifact JSON
     Debug {
@@ -98,6 +138,36 @@ enum Command {
 }
 
 #[derive(Debug)]
+struct RunCommandArgs {
+    file: String,
+    function: Option<String>,
+    variant: Option<String>,
+    bind: Vec<String>,
+    bind_file: Option<String>,
+    trace: bool,
+    strict: bool,
+    strict_types: bool,
+    strict_bindings: bool,
+    output: String,
+    context_file: Option<String>,
+    context_json: Option<String>,
+    context_strict: bool,
+    list_functions: bool,
+    dump_default_context: bool,
+    profile: bool,
+    matrix: bool,
+    mode: String,
+    max_steps: Option<usize>,
+    max_script_len: Option<usize>,
+    max_main_stack_depth: Option<usize>,
+    max_alt_stack_depth: Option<usize>,
+    max_stack_growth_per_step: Option<usize>,
+    max_opcode_budget: Option<usize>,
+    allow_opcode: Vec<String>,
+    seed: Option<u64>,
+}
+
+#[derive(Debug)]
 struct DebugCommandArgs {
     file: Option<String>,
     function: Option<String>,
@@ -109,6 +179,77 @@ struct DebugCommandArgs {
     list_samples: bool,
     pick: bool,
     headless: bool,
+}
+
+#[derive(Debug, Clone, Copy)]
+enum RunOutputFormat {
+    Plain,
+    Json,
+    Metrics,
+}
+
+#[derive(Debug, Clone)]
+struct FunctionTarget {
+    function_name: String,
+    server_variant: bool,
+}
+
+#[derive(Debug, Serialize)]
+struct FunctionExecutionReport {
+    contract_name: String,
+    function_name: String,
+    server_variant: bool,
+    outcome: String,
+    error_code: Option<String>,
+    error_message: Option<String>,
+    final_main_stack: Vec<runtime::value::StackValue>,
+    final_alt_stack: Vec<runtime::value::StackValue>,
+    telemetry: Vec<runtime::telemetry::StepTelemetry>,
+    trace_version: String,
+    trace_id: String,
+    seed: Option<u64>,
+    elapsed_nanos: u64,
+    policy_counters: runtime::telemetry::PolicyCounters,
+    runtime_options: runtime::telemetry::RuntimeOptionsSnapshot,
+}
+
+impl FunctionExecutionReport {
+    fn from_run(program: &runtime::LoadedProgram, run: runtime::vm::VmRunResult) -> Self {
+        let (outcome, error_code, error_message) = match &run.outcome {
+            runtime::vm::VmOutcome::ScriptTrue => ("script_true".to_string(), None, None),
+            runtime::vm::VmOutcome::ScriptFalse => ("script_false".to_string(), None, None),
+            runtime::vm::VmOutcome::RuntimeError(err) => (
+                "runtime_error".to_string(),
+                Some(format!("{:?}", err.code)),
+                Some(err.to_string()),
+            ),
+        };
+
+        Self {
+            contract_name: program.contract_name.clone(),
+            function_name: program.function_name.clone(),
+            server_variant: program.server_variant,
+            outcome,
+            error_code,
+            error_message,
+            final_main_stack: run.final_main_stack,
+            final_alt_stack: run.final_alt_stack,
+            telemetry: run.telemetry,
+            trace_version: run.trace_version,
+            trace_id: run.trace_id,
+            seed: run.seed,
+            elapsed_nanos: run.elapsed_nanos,
+            policy_counters: run.policy_counters,
+            runtime_options: run.runtime_options,
+        }
+    }
+}
+
+#[derive(Debug, Serialize)]
+struct RunExecutionReport {
+    contract_name: String,
+    matrix: bool,
+    results: Vec<FunctionExecutionReport>,
 }
 
 fn main() {
@@ -132,9 +273,56 @@ fn run() -> Result<i32> {
             function,
             variant,
             bind,
+            bind_file,
             trace,
             strict,
-        }) => run_command(&file, &function, variant, bind, trace, strict),
+            strict_types,
+            strict_bindings,
+            output,
+            context_file,
+            context_json,
+            context_strict,
+            list_functions,
+            dump_default_context,
+            profile,
+            matrix,
+            mode,
+            max_steps,
+            max_script_len,
+            max_main_stack_depth,
+            max_alt_stack_depth,
+            max_stack_growth_per_step,
+            max_opcode_budget,
+            allow_opcode,
+            seed,
+        }) => run_command(RunCommandArgs {
+            file,
+            function,
+            variant,
+            bind,
+            bind_file,
+            trace,
+            strict,
+            strict_types,
+            strict_bindings,
+            output,
+            context_file,
+            context_json,
+            context_strict,
+            list_functions,
+            dump_default_context,
+            profile,
+            matrix,
+            mode,
+            max_steps,
+            max_script_len,
+            max_main_stack_depth,
+            max_alt_stack_depth,
+            max_stack_growth_per_step,
+            max_opcode_budget,
+            allow_opcode,
+            seed,
+        }),
         Some(Command::Debug {
             file,
             function,
@@ -196,47 +384,394 @@ fn compile_command(file: &str, output: Option<String>) -> Result<i32> {
     Ok(0)
 }
 
-fn run_command(
-    file: &str,
-    function: &str,
-    variant: String,
-    bind: Vec<String>,
-    trace: bool,
-    strict: bool,
-) -> Result<i32> {
-    init_tracing(trace);
-    let variant = parse_bool_arg(&variant, "variant")?;
+fn run_command(args: RunCommandArgs) -> Result<i32> {
+    init_tracing(args.trace);
 
-    let contract = load_contract_from_path(file)?;
-    let program = runtime::load_program_from_contract(&contract, function, variant)?;
-    let mut env = runtime::env::ExecutionEnv {
-        strict_placeholders: strict,
-        bindings: runtime::default_bindings_for_program(&program),
-        ..runtime::env::ExecutionEnv::default()
+    let output_format = parse_output_format(&args.output)?;
+    let execution_mode = parse_execution_mode(&args.mode)?;
+
+    if args.context_file.is_some() && args.context_json.is_some() {
+        anyhow::bail!("--context-file and --context-json are mutually exclusive");
+    }
+
+    if args.dump_default_context {
+        let json = runtime::env::TxContext::default().to_json_pretty()?;
+        println!("{json}");
+        return Ok(0);
+    }
+
+    let contract = load_contract_from_path(&args.file)?;
+
+    if args.list_functions {
+        if contract.functions.is_empty() {
+            println!("No functions found in contract '{}'", contract.name);
+            return Ok(0);
+        }
+        println!("Functions for contract '{}':", contract.name);
+        for function in &contract.functions {
+            println!(
+                "- {} (serverVariant={})",
+                function.name, function.server_variant
+            );
+        }
+        return Ok(0);
+    }
+
+    let mut file_bindings = HashMap::new();
+    if let Some(path) = args.bind_file.as_deref() {
+        file_bindings = parse_bindings_file(path)?;
+    }
+    let cli_bindings = parse_bindings(&args.bind)?;
+
+    let tx_context = load_tx_context(
+        args.context_file.as_deref(),
+        args.context_json.as_deref(),
+        args.context_strict,
+    )?
+    .unwrap_or_default();
+
+    let policy_overrides = runtime::env::RuntimePolicy {
+        max_steps: args.max_steps,
+        max_script_len: args.max_script_len,
+        max_main_stack_depth: args.max_main_stack_depth,
+        max_alt_stack_depth: args.max_alt_stack_depth,
+        max_stack_growth_per_step: args.max_stack_growth_per_step,
+        max_opcode_budget: args.max_opcode_budget,
+        allowed_opcodes: None,
     };
-    env.bindings.extend(parse_bindings(&bind)?);
 
-    let result = runtime::execute_program(&program, &env);
-    println!(
-        "Contract: {}  Function: {}  Variant: {}",
-        program.contract_name, program.function_name, program.server_variant
-    );
+    let allowed_opcodes = if args.allow_opcode.is_empty() {
+        None
+    } else {
+        Some(args.allow_opcode.iter().cloned().collect::<BTreeSet<_>>())
+    };
 
-    match result.outcome {
-        runtime::vm::VmOutcome::ScriptTrue => {
-            println!("RESULT: true");
-            Ok(0)
-        }
-        runtime::vm::VmOutcome::ScriptFalse => {
-            println!("RESULT: false");
-            Ok(1)
-        }
-        runtime::vm::VmOutcome::RuntimeError(err) => {
-            println!("RESULT: runtime_error");
-            println!("ERROR: {err}");
-            Ok(2)
+    let targets = if args.matrix {
+        contract
+            .functions
+            .iter()
+            .map(|func| FunctionTarget {
+                function_name: func.name.clone(),
+                server_variant: func.server_variant,
+            })
+            .collect::<Vec<_>>()
+    } else {
+        let function_name = args
+            .function
+            .clone()
+            .context("--function is required unless --matrix is set")?;
+        let server_variant = match args.variant.as_deref() {
+            Some(raw) => parse_bool_arg(raw, "variant")?,
+            None => false,
+        };
+        vec![FunctionTarget {
+            function_name,
+            server_variant,
+        }]
+    };
+
+    if targets.is_empty() {
+        anyhow::bail!("no function targets were selected for execution");
+    }
+
+    let mut results: Vec<FunctionExecutionReport> = Vec::new();
+
+    for target in targets {
+        let program = runtime::load_program_from_contract(
+            &contract,
+            &target.function_name,
+            target.server_variant,
+        )?;
+
+        let mut env = runtime::env::ExecutionEnv::default().with_mode(execution_mode);
+        env.strict_placeholders = args.strict;
+        env.strict_types = args.strict_types;
+        env.strict_bindings = args.strict_bindings;
+        env.tx_context = tx_context.clone();
+        env.seed = args.seed;
+        env.runtime_policy = env.runtime_policy.with_overrides(&policy_overrides);
+        env.runtime_policy.allowed_opcodes = allowed_opcodes.clone();
+
+        env.bindings =
+            runtime::default_bindings_for_program_with_context(&program, &env.tx_context);
+        env.bindings.extend(file_bindings.clone());
+        env.bindings.extend(cli_bindings.clone());
+
+        let run = runtime::execute_program(&program, &env);
+        results.push(FunctionExecutionReport::from_run(&program, run));
+    }
+
+    let report = RunExecutionReport {
+        contract_name: contract.name,
+        matrix: args.matrix,
+        results,
+    };
+
+    let exit_code = summarize_exit_code(&report);
+    match output_format {
+        RunOutputFormat::Plain => render_plain_report(&report, args.profile),
+        RunOutputFormat::Json => println!("{}", serde_json::to_string_pretty(&report)?),
+        RunOutputFormat::Metrics => render_metrics_report(&report),
+    }
+
+    Ok(exit_code)
+}
+
+fn summarize_exit_code(report: &RunExecutionReport) -> i32 {
+    let mut code = 0;
+    for result in &report.results {
+        match result.outcome.as_str() {
+            "runtime_error" => return 2,
+            "script_false" => code = 1,
+            _ => {}
         }
     }
+    code
+}
+
+fn render_plain_report(report: &RunExecutionReport, profile: bool) {
+    if report.results.len() == 1 {
+        let result = &report.results[0];
+        println!(
+            "Contract: {}  Function: {}  Variant: {}",
+            result.contract_name, result.function_name, result.server_variant
+        );
+        match result.outcome.as_str() {
+            "script_true" => println!("RESULT: true"),
+            "script_false" => println!("RESULT: false"),
+            _ => {
+                println!("RESULT: runtime_error");
+                if let Some(message) = &result.error_message {
+                    println!("ERROR: {message}");
+                }
+            }
+        }
+        if profile {
+            println!(
+                "PROFILE: elapsed_nanos={} steps={} opcode_steps={} conditional_jumps={}",
+                result.elapsed_nanos,
+                result.policy_counters.steps,
+                result.policy_counters.opcode_steps,
+                result.policy_counters.conditional_jumps
+            );
+        }
+        return;
+    }
+
+    println!(
+        "Contract: {}  Matrix: {} function variants",
+        report.contract_name,
+        report.results.len()
+    );
+    for result in &report.results {
+        let status = match result.outcome.as_str() {
+            "script_true" => "true",
+            "script_false" => "false",
+            _ => "runtime_error",
+        };
+        println!(
+            "- {} (serverVariant={}): {}",
+            result.function_name, result.server_variant, status
+        );
+        if result.outcome == "runtime_error" {
+            if let Some(message) = &result.error_message {
+                println!("  error: {message}");
+            }
+        }
+        if profile {
+            println!(
+                "  profile: elapsed_nanos={} steps={} opcode_steps={} conditional_jumps={}",
+                result.elapsed_nanos,
+                result.policy_counters.steps,
+                result.policy_counters.opcode_steps,
+                result.policy_counters.conditional_jumps
+            );
+        }
+    }
+}
+
+fn render_metrics_report(report: &RunExecutionReport) {
+    println!(
+        "contract,function,server_variant,outcome,error_code,steps,opcode_steps,conditional_jumps,elapsed_nanos,trace_id"
+    );
+    for result in &report.results {
+        println!(
+            "{},{},{},{},{},{},{},{},{},{}",
+            report.contract_name,
+            result.function_name,
+            result.server_variant,
+            result.outcome,
+            result.error_code.clone().unwrap_or_default(),
+            result.policy_counters.steps,
+            result.policy_counters.opcode_steps,
+            result.policy_counters.conditional_jumps,
+            result.elapsed_nanos,
+            result.trace_id
+        );
+    }
+}
+
+fn load_tx_context(
+    context_file: Option<&str>,
+    context_json: Option<&str>,
+    strict_unknown_fields: bool,
+) -> Result<Option<runtime::env::TxContext>> {
+    let raw = match (context_file, context_json) {
+        (None, None) => return Ok(None),
+        (Some(path), None) => fs::read_to_string(path)
+            .with_context(|| format!("failed reading context file '{path}'"))?,
+        (None, Some(json)) => json.to_string(),
+        (Some(_), Some(_)) => {
+            anyhow::bail!("--context-file and --context-json are mutually exclusive")
+        }
+    };
+
+    let context = runtime::env::TxContext::from_json(&raw, strict_unknown_fields)?;
+    Ok(Some(context))
+}
+
+fn parse_output_format(raw: &str) -> Result<RunOutputFormat> {
+    match raw.to_ascii_lowercase().as_str() {
+        "plain" => Ok(RunOutputFormat::Plain),
+        "json" => Ok(RunOutputFormat::Json),
+        "metrics" => Ok(RunOutputFormat::Metrics),
+        _ => anyhow::bail!("invalid --output value '{raw}', expected plain|json|metrics"),
+    }
+}
+
+fn parse_execution_mode(raw: &str) -> Result<runtime::env::ExecutionMode> {
+    match raw.to_ascii_lowercase().as_str() {
+        "development" => Ok(runtime::env::ExecutionMode::Development),
+        "simulation" => Ok(runtime::env::ExecutionMode::Simulation),
+        "ci" => Ok(runtime::env::ExecutionMode::Ci),
+        "safety" => Ok(runtime::env::ExecutionMode::Safety),
+        _ => {
+            anyhow::bail!("invalid --mode value '{raw}', expected development|simulation|ci|safety")
+        }
+    }
+}
+
+fn parse_bindings(bind: &[String]) -> Result<HashMap<String, runtime::value::StackValue>> {
+    let mut out = HashMap::new();
+    for pair in bind {
+        let (key, value_raw) = pair
+            .split_once('=')
+            .with_context(|| format!("invalid --bind format '{}', expected key=value", pair))?;
+        let value = parse_binding_value(value_raw)?;
+        out.insert(key.to_string(), value);
+    }
+    Ok(out)
+}
+
+fn parse_bindings_file(path: &str) -> Result<HashMap<String, runtime::value::StackValue>> {
+    let raw = fs::read_to_string(path)
+        .with_context(|| format!("failed reading --bind-file path '{path}'"))?;
+    let value: serde_json::Value = serde_json::from_str(&raw)
+        .with_context(|| format!("invalid --bind-file json at '{path}'"))?;
+    let obj = value
+        .as_object()
+        .context("--bind-file must contain a JSON object")?;
+
+    let mut out = HashMap::new();
+    for (key, value) in obj {
+        let parsed = parse_binding_json_value(value)
+            .with_context(|| format!("invalid binding value for key '{key}' in --bind-file"))?;
+        out.insert(key.clone(), parsed);
+    }
+
+    Ok(out)
+}
+
+fn parse_binding_json_value(value: &serde_json::Value) -> Result<runtime::value::StackValue> {
+    Ok(match value {
+        serde_json::Value::Bool(v) => runtime::value::StackValue::Bool(*v),
+        serde_json::Value::Number(v) => {
+            let as_i64 = v
+                .as_i64()
+                .with_context(|| format!("number {v} is out of i64 range"))?;
+            runtime::value::StackValue::Int(as_i64)
+        }
+        serde_json::Value::String(v) => parse_binding_value(v)?,
+        serde_json::Value::Array(values) => {
+            let mut bytes = Vec::with_capacity(values.len());
+            for value in values {
+                let Some(v) = value.as_u64() else {
+                    anyhow::bail!("byte array must contain only unsigned integers");
+                };
+                if v > u8::MAX as u64 {
+                    anyhow::bail!("byte value {v} is out of range 0..255");
+                }
+                bytes.push(v as u8);
+            }
+            runtime::value::StackValue::Bytes(bytes)
+        }
+        serde_json::Value::Object(map) => {
+            let bind_type = map
+                .get("type")
+                .and_then(|v| v.as_str())
+                .context("typed binding object must include string field 'type'")?;
+            let bind_value = map
+                .get("value")
+                .context("typed binding object must include field 'value'")?;
+
+            match bind_type {
+                "int" => {
+                    let value = bind_value
+                        .as_i64()
+                        .context("typed int binding requires i64 value")?;
+                    runtime::value::StackValue::Int(value)
+                }
+                "bool" => {
+                    let value = bind_value
+                        .as_bool()
+                        .context("typed bool binding requires boolean value")?;
+                    runtime::value::StackValue::Bool(value)
+                }
+                "bytes_hex" => {
+                    let value = bind_value
+                        .as_str()
+                        .context("typed bytes_hex binding requires string value")?;
+                    let bytes = hex::decode(value)
+                        .with_context(|| format!("invalid bytes_hex payload '{value}'"))?;
+                    runtime::value::StackValue::Bytes(bytes)
+                }
+                "bytes_utf8" => {
+                    let value = bind_value
+                        .as_str()
+                        .context("typed bytes_utf8 binding requires string value")?;
+                    runtime::value::StackValue::Bytes(value.as_bytes().to_vec())
+                }
+                "symbol" => {
+                    let value = bind_value
+                        .as_str()
+                        .context("typed symbol binding requires string value")?;
+                    runtime::value::StackValue::Symbol(value.to_string())
+                }
+                other => anyhow::bail!(
+                    "unsupported typed binding '{other}', expected int|bool|bytes_hex|bytes_utf8|symbol"
+                ),
+            }
+        }
+        _ => anyhow::bail!("unsupported binding JSON value shape"),
+    })
+}
+
+fn parse_binding_value(raw: &str) -> Result<runtime::value::StackValue> {
+    if raw.eq_ignore_ascii_case("true") {
+        return Ok(runtime::value::StackValue::Bool(true));
+    }
+    if raw.eq_ignore_ascii_case("false") {
+        return Ok(runtime::value::StackValue::Bool(false));
+    }
+    if let Ok(v) = raw.parse::<i64>() {
+        return Ok(runtime::value::StackValue::Int(v));
+    }
+    if let Some(hex_raw) = raw.strip_prefix("hex:") {
+        let bytes = hex::decode(hex_raw)
+            .with_context(|| format!("invalid hex payload in binding value '{raw}'"))?;
+        return Ok(runtime::value::StackValue::Bytes(bytes));
+    }
+    Ok(runtime::value::StackValue::Symbol(raw.to_string()))
 }
 
 fn debug_command(args: DebugCommandArgs) -> Result<i32> {
@@ -316,36 +851,6 @@ fn debug_command(args: DebugCommandArgs) -> Result<i32> {
     Ok(0)
 }
 
-fn parse_bindings(bind: &[String]) -> Result<HashMap<String, runtime::value::StackValue>> {
-    let mut out = HashMap::new();
-    for pair in bind {
-        let (key, value_raw) = pair
-            .split_once('=')
-            .with_context(|| format!("invalid --bind format '{}', expected key=value", pair))?;
-        let value = parse_binding_value(value_raw)?;
-        out.insert(key.to_string(), value);
-    }
-    Ok(out)
-}
-
-fn parse_binding_value(raw: &str) -> Result<runtime::value::StackValue> {
-    if raw.eq_ignore_ascii_case("true") {
-        return Ok(runtime::value::StackValue::Bool(true));
-    }
-    if raw.eq_ignore_ascii_case("false") {
-        return Ok(runtime::value::StackValue::Bool(false));
-    }
-    if let Ok(v) = raw.parse::<i64>() {
-        return Ok(runtime::value::StackValue::Int(v));
-    }
-    if let Some(hex_raw) = raw.strip_prefix("hex:") {
-        let bytes = hex::decode(hex_raw)
-            .with_context(|| format!("invalid hex payload in binding value '{raw}'"))?;
-        return Ok(runtime::value::StackValue::Bytes(bytes));
-    }
-    Ok(runtime::value::StackValue::Symbol(raw.to_string()))
-}
-
 fn init_tracing(trace: bool) {
     let filter = if trace {
         EnvFilter::new("arkade_runtime=debug")
@@ -355,6 +860,7 @@ fn init_tracing(trace: bool) {
 
     let _ = tracing_subscriber::fmt()
         .with_env_filter(filter)
+        .with_writer(std::io::stderr)
         .with_target(false)
         .try_init();
 }

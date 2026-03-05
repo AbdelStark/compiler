@@ -53,6 +53,10 @@ impl Stack {
         self.main.len()
     }
 
+    pub fn len_alt(&self) -> usize {
+        self.alt.len()
+    }
+
     pub fn clear_main(&mut self) {
         self.main.clear();
     }

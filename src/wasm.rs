@@ -73,9 +73,12 @@ enum StackWireOutput {
 
 #[derive(Debug, Serialize)]
 struct RuntimeStepWire {
+    step_id: usize,
     ip: usize,
     token: String,
     status: String,
+    elapsed_nanos: u64,
+    policy_steps: usize,
     stack_before: Vec<StackWireOutput>,
     stack_after: Vec<StackWireOutput>,
 }
@@ -91,6 +94,12 @@ struct RuntimeExecutionWire {
     final_main_stack: Vec<StackWireOutput>,
     final_alt_stack: Vec<StackWireOutput>,
     telemetry: Vec<RuntimeStepWire>,
+    trace_version: String,
+    trace_id: String,
+    seed: Option<u64>,
+    runtime_options: serde_json::Value,
+    policy_counters: serde_json::Value,
+    elapsed_nanos: u64,
 }
 
 impl RuntimeExecutionWire {
@@ -112,6 +121,7 @@ impl RuntimeExecutionWire {
             .telemetry
             .iter()
             .map(|step| RuntimeStepWire {
+                step_id: step.step_id,
                 ip: step.ip,
                 token: step.token.clone(),
                 status: match step.status {
@@ -124,6 +134,8 @@ impl RuntimeExecutionWire {
                         "runtime_error".to_string()
                     }
                 },
+                elapsed_nanos: step.elapsed_nanos,
+                policy_steps: step.policy_steps,
                 stack_before: step.stack_before.iter().map(to_wire).collect(),
                 stack_after: step.stack_after.iter().map(to_wire).collect(),
             })
@@ -139,6 +151,14 @@ impl RuntimeExecutionWire {
             final_main_stack: run.final_main_stack.iter().map(to_wire).collect(),
             final_alt_stack: run.final_alt_stack.iter().map(to_wire).collect(),
             telemetry,
+            trace_version: run.trace_version.clone(),
+            trace_id: run.trace_id.clone(),
+            seed: run.seed,
+            runtime_options: serde_json::to_value(&run.runtime_options)
+                .unwrap_or(serde_json::Value::Null),
+            policy_counters: serde_json::to_value(&run.policy_counters)
+                .unwrap_or(serde_json::Value::Null),
+            elapsed_nanos: run.elapsed_nanos,
         }
     }
 }
@@ -188,6 +208,35 @@ fn decode_bindings_json(
         .collect::<Result<HashMap<_, _>, _>>()
 }
 
+fn decode_context_json(
+    context_json: Option<String>,
+    context_strict: bool,
+) -> Result<crate::runtime::env::TxContext, String> {
+    match context_json {
+        Some(raw) if !raw.trim().is_empty() => {
+            crate::runtime::env::TxContext::from_json(&raw, context_strict)
+                .map_err(|err| err.to_string())
+        }
+        _ => Ok(crate::runtime::env::TxContext::default()),
+    }
+}
+
+fn decode_mode(mode: Option<String>) -> Result<crate::runtime::env::ExecutionMode, String> {
+    match mode
+        .unwrap_or_else(|| "development".to_string())
+        .to_ascii_lowercase()
+        .as_str()
+    {
+        "development" => Ok(crate::runtime::env::ExecutionMode::Development),
+        "simulation" => Ok(crate::runtime::env::ExecutionMode::Simulation),
+        "ci" => Ok(crate::runtime::env::ExecutionMode::Ci),
+        "safety" => Ok(crate::runtime::env::ExecutionMode::Safety),
+        raw => Err(format!(
+            "invalid execution mode '{raw}', expected development|simulation|ci|safety"
+        )),
+    }
+}
+
 /// Execute one function path from a compiled contract JSON artifact.
 ///
 /// `bindings_json` must be a JSON object with values shaped like:
@@ -200,17 +249,50 @@ pub fn execute_contract_json(
     bindings_json: &str,
     strict_placeholders: bool,
 ) -> Result<String, String> {
+    execute_contract_json_advanced(
+        contract_json,
+        function_name,
+        server_variant,
+        bindings_json,
+        strict_placeholders,
+        false,
+        false,
+        None,
+        false,
+        None,
+    )
+}
+
+/// Execute one function path from a compiled contract JSON artifact with advanced runtime options.
+#[wasm_bindgen]
+pub fn execute_contract_json_advanced(
+    contract_json: &str,
+    function_name: &str,
+    server_variant: bool,
+    bindings_json: &str,
+    strict_placeholders: bool,
+    strict_types: bool,
+    strict_bindings: bool,
+    context_json: Option<String>,
+    context_strict: bool,
+    mode: Option<String>,
+) -> Result<String, String> {
     let contract: crate::models::ContractJson = serde_json::from_str(contract_json)
         .map_err(|err| format!("invalid contract artifact json: {err}"))?;
     let program =
         crate::runtime::load_program_from_contract(&contract, function_name, server_variant)
             .map_err(|err| err.to_string())?;
 
-    let mut env = crate::runtime::env::ExecutionEnv {
-        strict_placeholders,
-        bindings: crate::runtime::default_bindings_for_program(&program),
-        ..crate::runtime::env::ExecutionEnv::default()
-    };
+    let tx_context = decode_context_json(context_json, context_strict)?;
+    let execution_mode = decode_mode(mode)?;
+
+    let mut env = crate::runtime::env::ExecutionEnv::default().with_mode(execution_mode);
+    env.strict_placeholders = strict_placeholders;
+    env.strict_types = strict_types;
+    env.strict_bindings = strict_bindings;
+    env.tx_context = tx_context;
+    env.bindings =
+        crate::runtime::default_bindings_for_program_with_context(&program, &env.tx_context);
     env.bindings.extend(decode_bindings_json(bindings_json)?);
 
     let run = crate::runtime::execute_program(&program, &env);
@@ -227,14 +309,47 @@ pub fn execute_source(
     bindings_json: &str,
     strict_placeholders: bool,
 ) -> Result<String, String> {
+    execute_source_advanced(
+        source,
+        function_name,
+        server_variant,
+        bindings_json,
+        strict_placeholders,
+        false,
+        false,
+        None,
+        false,
+        None,
+    )
+}
+
+/// Compile Ark source and execute one function path with advanced runtime options.
+#[wasm_bindgen]
+pub fn execute_source_advanced(
+    source: &str,
+    function_name: &str,
+    server_variant: bool,
+    bindings_json: &str,
+    strict_placeholders: bool,
+    strict_types: bool,
+    strict_bindings: bool,
+    context_json: Option<String>,
+    context_strict: bool,
+    mode: Option<String>,
+) -> Result<String, String> {
     let contract = crate::compiler::compile(source)?;
     let contract_json =
         serde_json::to_string(&contract).map_err(|err| format!("Serialization error: {err}"))?;
-    execute_contract_json(
+    execute_contract_json_advanced(
         &contract_json,
         function_name,
         server_variant,
         bindings_json,
         strict_placeholders,
+        strict_types,
+        strict_bindings,
+        context_json,
+        context_strict,
+        mode,
     )
 }

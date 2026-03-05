@@ -23,6 +23,7 @@ use crate::opcodes::{
 };
 use crate::parser;
 use chrono::Utc;
+use std::collections::HashMap;
 // ─── Introspection Detection ────────────────────────────────────────────────────
 //
 // These helpers detect if a function uses introspection opcodes (OP_INSPECT*).
@@ -55,6 +56,7 @@ fn statement_uses_introspection(stmt: &Statement) -> bool {
         Statement::LetBinding { value, .. } | Statement::VarAssign { value, .. } => {
             expression_uses_introspection(value)
         }
+        Statement::FunctionCall { .. } => false,
     }
 }
 
@@ -268,6 +270,7 @@ fn collect_asset_ids_from_statement(stmt: &Statement, ids: &mut Vec<String>) {
         Statement::LetBinding { value, .. } | Statement::VarAssign { value, .. } => {
             collect_asset_ids_from_expression(value, ids);
         }
+        Statement::FunctionCall { .. } => {}
     }
 }
 
@@ -536,6 +539,9 @@ fn collect_requirements_from_statements(
             Statement::LetBinding { .. } | Statement::VarAssign { .. } => {
                 // Variable bindings and assignments don't generate requirements
             }
+            Statement::FunctionCall { .. } => {
+                // Statement-level function calls are explicit no-ops in current lowering model.
+            }
         }
     }
 }
@@ -582,9 +588,259 @@ fn requirement_to_statement(req: &Requirement) -> RequireStatement {
 
 /// Generate assembly instructions from statements
 fn generate_asm_from_statements(statements: &[Statement]) -> Vec<String> {
+    let lowered_statements = lower_variable_statements(statements);
     let mut asm = Vec::new();
-    generate_asm_from_statements_recursive(statements, &mut asm);
+    generate_asm_from_statements_recursive(&lowered_statements, &mut asm);
     asm
+}
+
+fn lower_variable_statements(statements: &[Statement]) -> Vec<Statement> {
+    let mut scope: HashMap<String, Expression> = HashMap::new();
+    lower_variable_statements_with_scope(statements, &mut scope)
+}
+
+fn lower_variable_statements_with_scope(
+    statements: &[Statement],
+    scope: &mut HashMap<String, Expression>,
+) -> Vec<Statement> {
+    let mut out = Vec::new();
+
+    for stmt in statements {
+        match stmt {
+            Statement::LetBinding { name, value } => {
+                let resolved = substitute_bound_expression(value, scope);
+                scope.insert(name.clone(), resolved.clone());
+                out.push(Statement::LetBinding {
+                    name: name.clone(),
+                    value: resolved,
+                });
+            }
+            Statement::VarAssign { name, value } => {
+                let resolved = substitute_bound_expression(value, scope);
+                scope.insert(name.clone(), resolved);
+            }
+            Statement::FunctionCall { call } => {
+                out.push(Statement::FunctionCall { call: call.clone() });
+            }
+            Statement::Require(req) => {
+                out.push(Statement::Require(substitute_bound_requirement(req, scope)));
+            }
+            Statement::IfElse {
+                condition,
+                then_body,
+                else_body,
+            } => {
+                let resolved_condition = substitute_bound_expression(condition, scope);
+                let mut then_scope = scope.clone();
+                let resolved_then =
+                    lower_variable_statements_with_scope(then_body, &mut then_scope);
+                let resolved_else = else_body.as_ref().map(|body| {
+                    let mut else_scope = scope.clone();
+                    lower_variable_statements_with_scope(body, &mut else_scope)
+                });
+
+                out.push(Statement::IfElse {
+                    condition: resolved_condition,
+                    then_body: resolved_then,
+                    else_body: resolved_else,
+                });
+            }
+            Statement::ForIn {
+                index_var,
+                value_var,
+                iterable,
+                body,
+            } => {
+                let resolved_iterable = substitute_bound_expression(iterable, scope);
+                let mut loop_scope = scope.clone();
+                loop_scope.remove(index_var);
+                loop_scope.remove(value_var);
+                let resolved_body = lower_variable_statements_with_scope(body, &mut loop_scope);
+                out.push(Statement::ForIn {
+                    index_var: index_var.clone(),
+                    value_var: value_var.clone(),
+                    iterable: resolved_iterable,
+                    body: resolved_body,
+                });
+            }
+        }
+    }
+
+    out
+}
+
+fn substitute_bound_requirement(
+    requirement: &Requirement,
+    scope: &HashMap<String, Expression>,
+) -> Requirement {
+    match requirement {
+        Requirement::Comparison { left, op, right } => Requirement::Comparison {
+            left: substitute_bound_expression(left, scope),
+            op: op.clone(),
+            right: substitute_bound_expression(right, scope),
+        },
+        Requirement::CheckSig { signature, pubkey } => Requirement::CheckSig {
+            signature: resolve_identifier_alias(signature, scope),
+            pubkey: resolve_identifier_alias(pubkey, scope),
+        },
+        Requirement::CheckSigFromStack {
+            signature,
+            pubkey,
+            message,
+        } => Requirement::CheckSigFromStack {
+            signature: resolve_identifier_alias(signature, scope),
+            pubkey: resolve_identifier_alias(pubkey, scope),
+            message: resolve_identifier_alias(message, scope),
+        },
+        Requirement::CheckMultisig {
+            signatures,
+            pubkeys,
+        } => Requirement::CheckMultisig {
+            signatures: signatures
+                .iter()
+                .map(|sig| resolve_identifier_alias(sig, scope))
+                .collect(),
+            pubkeys: pubkeys
+                .iter()
+                .map(|pk| resolve_identifier_alias(pk, scope))
+                .collect(),
+        },
+        Requirement::After {
+            blocks,
+            timelock_var,
+        } => Requirement::After {
+            blocks: *blocks,
+            timelock_var: timelock_var
+                .as_ref()
+                .map(|name| resolve_identifier_alias(name, scope)),
+        },
+        Requirement::HashEqual { preimage, hash } => Requirement::HashEqual {
+            preimage: resolve_identifier_alias(preimage, scope),
+            hash: resolve_identifier_alias(hash, scope),
+        },
+    }
+}
+
+fn resolve_identifier_alias(name: &str, scope: &HashMap<String, Expression>) -> String {
+    match scope.get(name) {
+        Some(Expression::Variable(alias)) => alias.clone(),
+        Some(Expression::Literal(literal)) => literal.clone(),
+        _ => name.to_string(),
+    }
+}
+
+fn substitute_bound_expression(
+    expression: &Expression,
+    scope: &HashMap<String, Expression>,
+) -> Expression {
+    match expression {
+        Expression::Variable(name) => scope
+            .get(name)
+            .map(|bound| substitute_bound_expression(bound, scope))
+            .unwrap_or_else(|| expression.clone()),
+        Expression::BinaryOp { left, op, right } => Expression::BinaryOp {
+            left: Box::new(substitute_bound_expression(left, scope)),
+            op: op.clone(),
+            right: Box::new(substitute_bound_expression(right, scope)),
+        },
+        Expression::AssetLookup {
+            source,
+            index,
+            asset_id,
+        } => Expression::AssetLookup {
+            source: source.clone(),
+            index: Box::new(substitute_bound_expression(index, scope)),
+            asset_id: asset_id.clone(),
+        },
+        Expression::AssetCount { source, index } => Expression::AssetCount {
+            source: source.clone(),
+            index: Box::new(substitute_bound_expression(index, scope)),
+        },
+        Expression::AssetAt {
+            source,
+            io_index,
+            asset_index,
+            property,
+        } => Expression::AssetAt {
+            source: source.clone(),
+            io_index: Box::new(substitute_bound_expression(io_index, scope)),
+            asset_index: Box::new(substitute_bound_expression(asset_index, scope)),
+            property: property.clone(),
+        },
+        Expression::InputIntrospection { index, property } => Expression::InputIntrospection {
+            index: Box::new(substitute_bound_expression(index, scope)),
+            property: property.clone(),
+        },
+        Expression::OutputIntrospection { index, property } => Expression::OutputIntrospection {
+            index: Box::new(substitute_bound_expression(index, scope)),
+            property: property.clone(),
+        },
+        Expression::GroupSum { index, source } => Expression::GroupSum {
+            index: Box::new(substitute_bound_expression(index, scope)),
+            source: source.clone(),
+        },
+        Expression::GroupNumIO { index, source } => Expression::GroupNumIO {
+            index: Box::new(substitute_bound_expression(index, scope)),
+            source: source.clone(),
+        },
+        Expression::GroupIOAccess {
+            group_index,
+            io_index,
+            source,
+            property,
+        } => Expression::GroupIOAccess {
+            group_index: Box::new(substitute_bound_expression(group_index, scope)),
+            io_index: Box::new(substitute_bound_expression(io_index, scope)),
+            source: source.clone(),
+            property: property.clone(),
+        },
+        Expression::ArrayIndex { array, index } => Expression::ArrayIndex {
+            array: Box::new(substitute_bound_expression(array, scope)),
+            index: Box::new(substitute_bound_expression(index, scope)),
+        },
+        Expression::Sha256Initialize { data } => Expression::Sha256Initialize {
+            data: Box::new(substitute_bound_expression(data, scope)),
+        },
+        Expression::Sha256Update { context, chunk } => Expression::Sha256Update {
+            context: Box::new(substitute_bound_expression(context, scope)),
+            chunk: Box::new(substitute_bound_expression(chunk, scope)),
+        },
+        Expression::Sha256Finalize {
+            context,
+            last_chunk,
+        } => Expression::Sha256Finalize {
+            context: Box::new(substitute_bound_expression(context, scope)),
+            last_chunk: Box::new(substitute_bound_expression(last_chunk, scope)),
+        },
+        Expression::Neg64 { value } => Expression::Neg64 {
+            value: Box::new(substitute_bound_expression(value, scope)),
+        },
+        Expression::Le64ToScriptNum { value } => Expression::Le64ToScriptNum {
+            value: Box::new(substitute_bound_expression(value, scope)),
+        },
+        Expression::Le32ToLe64 { value } => Expression::Le32ToLe64 {
+            value: Box::new(substitute_bound_expression(value, scope)),
+        },
+        Expression::EcMulScalarVerify {
+            scalar,
+            point_p,
+            point_q,
+        } => Expression::EcMulScalarVerify {
+            scalar: Box::new(substitute_bound_expression(scalar, scope)),
+            point_p: Box::new(substitute_bound_expression(point_p, scope)),
+            point_q: Box::new(substitute_bound_expression(point_q, scope)),
+        },
+        Expression::TweakVerify {
+            point_p,
+            tweak,
+            point_q,
+        } => Expression::TweakVerify {
+            point_p: Box::new(substitute_bound_expression(point_p, scope)),
+            tweak: Box::new(substitute_bound_expression(tweak, scope)),
+            point_q: Box::new(substitute_bound_expression(point_q, scope)),
+        },
+        _ => expression.clone(),
+    }
 }
 
 /// Recursively generate assembly from statements
@@ -665,13 +921,10 @@ fn generate_asm_from_statements_recursive(statements: &[Statement], asm: &mut Ve
                 }
             }
             Statement::LetBinding { name: _, value } => {
-                // Emit the expression value onto the stack
-                // TODO: Implement proper variable binding with stack tracking
                 generate_expression_asm(value, asm);
             }
-            Statement::VarAssign { name: _, value: _ } => {
-                // TODO: Implement variable reassignment
-            }
+            Statement::VarAssign { .. } => {}
+            Statement::FunctionCall { .. } => {}
         }
     }
 }
@@ -817,12 +1070,25 @@ fn generate_expression_asm(expr: &Expression, asm: &mut Vec<String>) {
             }
         }
         Expression::ArrayIndex { array, index } => {
-            // TODO: Implement array indexing in Commit 6
-            generate_expression_asm(array, asm);
-            generate_expression_asm(index, asm);
+            if let (Expression::Variable(array_name), Expression::Literal(idx)) =
+                (array.as_ref(), index.as_ref())
+            {
+                asm.push(format!("<{}_{}>", array_name, idx));
+            } else if let (Expression::Variable(array_name), Expression::Variable(idx_name)) =
+                (array.as_ref(), index.as_ref())
+            {
+                asm.push(format!("<{}_{}>", array_name, idx_name));
+            } else {
+                generate_expression_asm(array, asm);
+                generate_expression_asm(index, asm);
+            }
         }
-        Expression::ArrayLength(_) => {
-            // TODO: Implement array length in Commit 6
+        Expression::ArrayLength(name) => {
+            if name == "tx.assetGroups" {
+                asm.push(OP_INSPECTNUMASSETGROUPS.to_string());
+            } else {
+                asm.push(DEFAULT_ARRAY_LENGTH.to_string());
+            }
         }
         Expression::CheckSigExpr { signature, pubkey } => {
             asm.push(format!("<{}>", pubkey));
@@ -1318,12 +1584,25 @@ fn emit_expression_asm(expr: &Expression, asm: &mut Vec<String>) {
             }
         }
         Expression::ArrayIndex { array, index } => {
-            // TODO: Implement array indexing in Commit 6
-            emit_expression_asm(array, asm);
-            emit_expression_asm(index, asm);
+            if let (Expression::Variable(array_name), Expression::Literal(idx)) =
+                (array.as_ref(), index.as_ref())
+            {
+                asm.push(format!("<{}_{}>", array_name, idx));
+            } else if let (Expression::Variable(array_name), Expression::Variable(idx_name)) =
+                (array.as_ref(), index.as_ref())
+            {
+                asm.push(format!("<{}_{}>", array_name, idx_name));
+            } else {
+                emit_expression_asm(array, asm);
+                emit_expression_asm(index, asm);
+            }
         }
-        Expression::ArrayLength(_) => {
-            // TODO: Implement array length in Commit 6
+        Expression::ArrayLength(name) => {
+            if name == "tx.assetGroups" {
+                asm.push(OP_INSPECTNUMASSETGROUPS.to_string());
+            } else {
+                asm.push(DEFAULT_ARRAY_LENGTH.to_string());
+            }
         }
         Expression::CheckSigExpr { signature, pubkey } => {
             asm.push(format!("<{}>", pubkey));
@@ -1804,6 +2083,7 @@ fn substitute_statement(
             name: name.clone(),
             value: substitute_expression(value, index_var, value_var, k, array_name),
         },
+        Statement::FunctionCall { call } => Statement::FunctionCall { call: call.clone() },
         Statement::IfElse {
             condition,
             then_body,

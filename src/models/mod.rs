@@ -132,6 +132,8 @@ pub enum Statement {
         iterable: Expression,
         body: Vec<Statement>,
     },
+    /// foo(arg1, arg2); explicit statement-level function call (currently lowered as no-op)
+    FunctionCall { call: String },
 }
 
 /// Requirement AST

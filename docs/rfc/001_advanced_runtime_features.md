@@ -1,8 +1,20 @@
 # RFC 001: Advanced Runtime Features
 
-**Status**: Draft
+**Status**: Implemented (Baseline)
 **Date**: 2026-03-03
 **Owner**: compiler runtime improvement track
+
+## Implementation Notes (2026-03-05)
+
+The baseline described here is now implemented in the codebase with end-to-end coverage across CLI, runtime, compiler, parser, and WASM surfaces:
+
+- Deterministic context-aware execution inputs (`--context-file`, `--context-json`, strict unknown-field mode).
+- Expanded strictness controls (`strict_placeholders`, `strict_types`, `strict_bindings`).
+- Runtime policy guardrails (step/script/stack/op budgets and opcode allowlist).
+- Structured trace v1 metadata (`trace_version`, `trace_id`, runtime options, policy counters).
+- CLI execution protocol upgrades (`--output json|metrics`, `--bind-file`, `--list-functions`, `--dump-default-context`, `--matrix`, `--profile`).
+- WASM advanced execution entrypoints with context + strict mode support.
+- Compiler/parser semantic completion items for reassignment lowering and array index/length handling, plus explicit statement-level function-call lowering.
 
 ## Goal
 

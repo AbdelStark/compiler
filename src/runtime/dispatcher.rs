@@ -78,7 +78,9 @@ impl OpcodeDispatcher {
 
             "OP_NOT" => {
                 let value = vm.stack.pop_main()?;
-                vm.stack.push_main(StackValue::Bool(!value.as_bool()?))?;
+                vm.stack.push_main(StackValue::Bool(
+                    !value.as_bool_with_strict(env.strict_types)?,
+                ))?;
                 Ok(DispatchOutcome::Advance)
             }
             "OP_EQUAL" => {
@@ -98,40 +100,52 @@ impl OpcodeDispatcher {
             }
             "OP_VERIFY" => {
                 let top = vm.stack.pop_main()?;
-                if top.as_bool()? {
+                if top.as_bool_with_strict(env.strict_types)? {
                     Ok(DispatchOutcome::Advance)
                 } else {
                     Ok(DispatchOutcome::HaltFalse)
                 }
             }
 
-            "OP_ADD" | "OP_ADD64" => Self::binary_i64(vm, |a, b| a.saturating_add(b)),
-            "OP_SUB" | "OP_SUB64" => Self::binary_i64(vm, |a, b| a.saturating_sub(b)),
-            "OP_MUL" | "OP_MUL64" => Self::binary_i64(vm, |a, b| a.saturating_mul(b)),
+            "OP_ADD" | "OP_ADD64" => {
+                Self::binary_i64(vm, env.strict_types, |a, b| a.saturating_add(b))
+            }
+            "OP_SUB" | "OP_SUB64" => {
+                Self::binary_i64(vm, env.strict_types, |a, b| a.saturating_sub(b))
+            }
+            "OP_MUL" | "OP_MUL64" => {
+                Self::binary_i64(vm, env.strict_types, |a, b| a.saturating_mul(b))
+            }
             "OP_DIV" | "OP_DIV64" => {
                 let right = vm.stack.pop_main()?;
                 let left = vm.stack.pop_main()?;
-                let divisor = right.as_i64()?;
+                let divisor = right.as_i64_with_strict(env.strict_types)?;
                 if divisor == 0 {
                     return Err(RuntimeError::new(
                         RuntimeErrorCode::DivisionByZero,
                         "OP_DIV64 divisor is zero",
                     ));
                 }
-                vm.stack
-                    .push_main(StackValue::Int(left.as_i64()? / divisor))?;
+                vm.stack.push_main(StackValue::Int(
+                    left.as_i64_with_strict(env.strict_types)? / divisor,
+                ))?;
                 Ok(DispatchOutcome::Advance)
             }
-            "OP_GREATERTHAN" | "OP_GREATERTHAN64" => Self::binary_cmp(vm, |a, b| a > b),
-            "OP_GREATERTHANOREQUAL" | "OP_GREATERTHANOREQUAL64" => {
-                Self::binary_cmp(vm, |a, b| a >= b)
+            "OP_GREATERTHAN" | "OP_GREATERTHAN64" => {
+                Self::binary_cmp(vm, env.strict_types, |a, b| a > b)
             }
-            "OP_LESSTHAN" | "OP_LESSTHAN64" => Self::binary_cmp(vm, |a, b| a < b),
-            "OP_LESSTHANOREQUAL" | "OP_LESSTHANOREQUAL64" => Self::binary_cmp(vm, |a, b| a <= b),
+            "OP_GREATERTHANOREQUAL" | "OP_GREATERTHANOREQUAL64" => {
+                Self::binary_cmp(vm, env.strict_types, |a, b| a >= b)
+            }
+            "OP_LESSTHAN" | "OP_LESSTHAN64" => Self::binary_cmp(vm, env.strict_types, |a, b| a < b),
+            "OP_LESSTHANOREQUAL" | "OP_LESSTHANOREQUAL64" => {
+                Self::binary_cmp(vm, env.strict_types, |a, b| a <= b)
+            }
             "OP_NEG64" => {
                 let value = vm.stack.pop_main()?;
-                vm.stack
-                    .push_main(StackValue::Int(value.as_i64()?.saturating_neg()))?;
+                vm.stack.push_main(StackValue::Int(
+                    value.as_i64_with_strict(env.strict_types)?.saturating_neg(),
+                ))?;
                 Ok(DispatchOutcome::Advance)
             }
 
@@ -211,7 +225,7 @@ impl OpcodeDispatcher {
             }
             "OP_CHECKSIGADD" => {
                 let pubkey = vm.stack.pop_main()?;
-                let n = vm.stack.pop_main()?.as_i64()?;
+                let n = vm.stack.pop_main()?.as_i64_with_strict(env.strict_types)?;
                 let signature = vm.stack.pop_main()?;
                 let ok = env.verify_signature(&pubkey, &signature, None);
                 vm.stack
@@ -222,7 +236,7 @@ impl OpcodeDispatcher {
                 let mut signatures: Vec<StackValue> = Vec::new();
                 let sig_count = loop {
                     let value = vm.stack.pop_main()?;
-                    if let Some(count) = Self::try_count(&value) {
+                    if let Some(count) = Self::try_count(&value, env.strict_types) {
                         break count;
                     }
                     signatures.push(value);
@@ -232,7 +246,7 @@ impl OpcodeDispatcher {
                 let mut pubkeys: Vec<StackValue> = Vec::new();
                 let key_count = loop {
                     let value = vm.stack.pop_main()?;
-                    if let Some(count) = Self::try_count(&value) {
+                    if let Some(count) = Self::try_count(&value, env.strict_types) {
                         break count;
                     }
                     pubkeys.push(value);
@@ -248,7 +262,7 @@ impl OpcodeDispatcher {
             }
 
             "OP_SCRIPTNUMTOLE64" => {
-                let v = vm.stack.pop_main()?.as_i64()?;
+                let v = vm.stack.pop_main()?.as_i64_with_strict(env.strict_types)?;
                 vm.stack
                     .push_main(StackValue::Bytes(v.to_le_bytes().to_vec()))?;
                 Ok(DispatchOutcome::Advance)
@@ -405,7 +419,7 @@ impl OpcodeDispatcher {
                 Ok(DispatchOutcome::Advance)
             }
             "OP_INSPECTINPUTSCRIPTPUBKEY" => {
-                let index = Self::pop_index(vm)?;
+                let index = Self::pop_index(vm, env.strict_types)?;
                 let input = env.tx_context.input_at(index).ok_or_else(|| {
                     RuntimeError::new(
                         RuntimeErrorCode::InvalidNumericEncoding,
@@ -417,7 +431,7 @@ impl OpcodeDispatcher {
                 Ok(DispatchOutcome::Advance)
             }
             "OP_INSPECTINPUTVALUE" => {
-                let index = Self::pop_index(vm)?;
+                let index = Self::pop_index(vm, env.strict_types)?;
                 let input = env.tx_context.input_at(index).ok_or_else(|| {
                     RuntimeError::new(
                         RuntimeErrorCode::InvalidNumericEncoding,
@@ -428,7 +442,7 @@ impl OpcodeDispatcher {
                 Ok(DispatchOutcome::Advance)
             }
             "OP_INSPECTINPUTSEQUENCE" => {
-                let index = Self::pop_index(vm)?;
+                let index = Self::pop_index(vm, env.strict_types)?;
                 let input = env.tx_context.input_at(index).ok_or_else(|| {
                     RuntimeError::new(
                         RuntimeErrorCode::InvalidNumericEncoding,
@@ -439,7 +453,7 @@ impl OpcodeDispatcher {
                 Ok(DispatchOutcome::Advance)
             }
             "OP_INSPECTINPUTOUTPOINT" => {
-                let index = Self::pop_index(vm)?;
+                let index = Self::pop_index(vm, env.strict_types)?;
                 let input = env.tx_context.input_at(index).ok_or_else(|| {
                     RuntimeError::new(
                         RuntimeErrorCode::InvalidNumericEncoding,
@@ -451,7 +465,7 @@ impl OpcodeDispatcher {
                 Ok(DispatchOutcome::Advance)
             }
             "OP_INSPECTINPUTISSUANCE" => {
-                let index = Self::pop_index(vm)?;
+                let index = Self::pop_index(vm, env.strict_types)?;
                 let input = env.tx_context.input_at(index).ok_or_else(|| {
                     RuntimeError::new(
                         RuntimeErrorCode::InvalidNumericEncoding,
@@ -463,7 +477,7 @@ impl OpcodeDispatcher {
                 Ok(DispatchOutcome::Advance)
             }
             "OP_INSPECTOUTPUTVALUE" => {
-                let index = Self::pop_index(vm)?;
+                let index = Self::pop_index(vm, env.strict_types)?;
                 let output = env.tx_context.output_at(index).ok_or_else(|| {
                     RuntimeError::new(
                         RuntimeErrorCode::InvalidNumericEncoding,
@@ -474,7 +488,7 @@ impl OpcodeDispatcher {
                 Ok(DispatchOutcome::Advance)
             }
             "OP_INSPECTOUTPUTSCRIPTPUBKEY" => {
-                let index = Self::pop_index(vm)?;
+                let index = Self::pop_index(vm, env.strict_types)?;
                 let output = env.tx_context.output_at(index).ok_or_else(|| {
                     RuntimeError::new(
                         RuntimeErrorCode::InvalidNumericEncoding,
@@ -486,7 +500,7 @@ impl OpcodeDispatcher {
                 Ok(DispatchOutcome::Advance)
             }
             "OP_INSPECTOUTPUTNONCE" => {
-                let index = Self::pop_index(vm)?;
+                let index = Self::pop_index(vm, env.strict_types)?;
                 let output = env.tx_context.output_at(index).ok_or_else(|| {
                     RuntimeError::new(
                         RuntimeErrorCode::InvalidNumericEncoding,
@@ -499,7 +513,7 @@ impl OpcodeDispatcher {
             }
 
             "OP_FINDASSETGROUPBYASSETID" => {
-                let gidx = Self::pop_u16(vm)?;
+                let gidx = Self::pop_u16(vm, env.strict_types)?;
                 let txid = Self::pop_txid(vm)?;
                 let group_index = env.tx_context.find_group_index(&txid, gidx);
                 vm.stack.push_main(StackValue::Int(group_index))?;
@@ -511,8 +525,8 @@ impl OpcodeDispatcher {
                 Ok(DispatchOutcome::Advance)
             }
             "OP_INSPECTASSETGROUPSUM" => {
-                let source = Self::pop_i64(vm)?;
-                let group_index = Self::pop_index(vm)?;
+                let source = Self::pop_i64(vm, env.strict_types)?;
+                let group_index = Self::pop_index(vm, env.strict_types)?;
                 let group = env.tx_context.group_at(group_index).ok_or_else(|| {
                     RuntimeError::new(
                         RuntimeErrorCode::InvalidNumericEncoding,
@@ -528,8 +542,8 @@ impl OpcodeDispatcher {
                 Ok(DispatchOutcome::Advance)
             }
             "OP_INSPECTASSETGROUPNUM" => {
-                let source = Self::pop_i64(vm)?;
-                let group_index = Self::pop_index(vm)?;
+                let source = Self::pop_i64(vm, env.strict_types)?;
+                let group_index = Self::pop_index(vm, env.strict_types)?;
                 let group = env.tx_context.group_at(group_index).ok_or_else(|| {
                     RuntimeError::new(
                         RuntimeErrorCode::InvalidNumericEncoding,
@@ -545,7 +559,7 @@ impl OpcodeDispatcher {
                 Ok(DispatchOutcome::Advance)
             }
             "OP_INSPECTASSETGROUPASSETID" => {
-                let group_index = Self::pop_index(vm)?;
+                let group_index = Self::pop_index(vm, env.strict_types)?;
                 let group = env.tx_context.group_at(group_index).ok_or_else(|| {
                     RuntimeError::new(
                         RuntimeErrorCode::InvalidNumericEncoding,
@@ -557,7 +571,7 @@ impl OpcodeDispatcher {
                 Ok(DispatchOutcome::Advance)
             }
             "OP_INSPECTASSETGROUPCTRL" => {
-                let group_index = Self::pop_index(vm)?;
+                let group_index = Self::pop_index(vm, env.strict_types)?;
                 let group = env.tx_context.group_at(group_index).ok_or_else(|| {
                     RuntimeError::new(
                         RuntimeErrorCode::InvalidNumericEncoding,
@@ -569,7 +583,7 @@ impl OpcodeDispatcher {
                 Ok(DispatchOutcome::Advance)
             }
             "OP_INSPECTASSETGROUPMETADATAHASH" => {
-                let group_index = Self::pop_index(vm)?;
+                let group_index = Self::pop_index(vm, env.strict_types)?;
                 let group = env.tx_context.group_at(group_index).ok_or_else(|| {
                     RuntimeError::new(
                         RuntimeErrorCode::InvalidNumericEncoding,
@@ -581,9 +595,9 @@ impl OpcodeDispatcher {
                 Ok(DispatchOutcome::Advance)
             }
             "OP_INSPECTASSETGROUP" => {
-                let source = Self::pop_i64(vm)?;
-                let io_index = Self::pop_index(vm)?;
-                let group_index = Self::pop_index(vm)?;
+                let source = Self::pop_i64(vm, env.strict_types)?;
+                let io_index = Self::pop_index(vm, env.strict_types)?;
+                let group_index = Self::pop_index(vm, env.strict_types)?;
                 let group = env.tx_context.group_at(group_index).ok_or_else(|| {
                     RuntimeError::new(
                         RuntimeErrorCode::InvalidNumericEncoding,
@@ -629,7 +643,7 @@ impl OpcodeDispatcher {
                 Ok(DispatchOutcome::Advance)
             }
             "OP_INSPECTINASSETCOUNT" => {
-                let index = Self::pop_index(vm)?;
+                let index = Self::pop_index(vm, env.strict_types)?;
                 let input = env.tx_context.input_at(index).ok_or_else(|| {
                     RuntimeError::new(
                         RuntimeErrorCode::InvalidNumericEncoding,
@@ -641,7 +655,7 @@ impl OpcodeDispatcher {
                 Ok(DispatchOutcome::Advance)
             }
             "OP_INSPECTOUTASSETCOUNT" => {
-                let index = Self::pop_index(vm)?;
+                let index = Self::pop_index(vm, env.strict_types)?;
                 let output = env.tx_context.output_at(index).ok_or_else(|| {
                     RuntimeError::new(
                         RuntimeErrorCode::InvalidNumericEncoding,
@@ -662,7 +676,7 @@ impl OpcodeDispatcher {
             }
 
             "OP_IF" => {
-                let condition = vm.stack.pop_main()?.as_bool()?;
+                let condition = vm.stack.pop_main()?.as_bool_with_strict(env.strict_types)?;
                 if condition {
                     Ok(DispatchOutcome::Advance)
                 } else {
@@ -690,32 +704,38 @@ impl OpcodeDispatcher {
 
     fn binary_i64(
         vm: &mut VMState,
+        strict_types: bool,
         f: impl Fn(i64, i64) -> i64,
     ) -> Result<DispatchOutcome, RuntimeError> {
         let right = vm.stack.pop_main()?;
         let left = vm.stack.pop_main()?;
-        vm.stack
-            .push_main(StackValue::Int(f(left.as_i64()?, right.as_i64()?)))?;
+        vm.stack.push_main(StackValue::Int(f(
+            left.as_i64_with_strict(strict_types)?,
+            right.as_i64_with_strict(strict_types)?,
+        )))?;
         Ok(DispatchOutcome::Advance)
     }
 
     fn binary_cmp(
         vm: &mut VMState,
+        strict_types: bool,
         f: impl Fn(i64, i64) -> bool,
     ) -> Result<DispatchOutcome, RuntimeError> {
         let right = vm.stack.pop_main()?;
         let left = vm.stack.pop_main()?;
-        vm.stack
-            .push_main(StackValue::Bool(f(left.as_i64()?, right.as_i64()?)))?;
+        vm.stack.push_main(StackValue::Bool(f(
+            left.as_i64_with_strict(strict_types)?,
+            right.as_i64_with_strict(strict_types)?,
+        )))?;
         Ok(DispatchOutcome::Advance)
     }
 
-    fn pop_i64(vm: &mut VMState) -> Result<i64, RuntimeError> {
-        vm.stack.pop_main()?.as_i64()
+    fn pop_i64(vm: &mut VMState, strict_types: bool) -> Result<i64, RuntimeError> {
+        vm.stack.pop_main()?.as_i64_with_strict(strict_types)
     }
 
-    fn pop_index(vm: &mut VMState) -> Result<usize, RuntimeError> {
-        let v = Self::pop_i64(vm)?;
+    fn pop_index(vm: &mut VMState, strict_types: bool) -> Result<usize, RuntimeError> {
+        let v = Self::pop_i64(vm, strict_types)?;
         if v < 0 {
             return Err(RuntimeError::new(
                 RuntimeErrorCode::InvalidNumericEncoding,
@@ -725,8 +745,8 @@ impl OpcodeDispatcher {
         Ok(v as usize)
     }
 
-    fn pop_u16(vm: &mut VMState) -> Result<u16, RuntimeError> {
-        let v = Self::pop_i64(vm)?;
+    fn pop_u16(vm: &mut VMState, strict_types: bool) -> Result<u16, RuntimeError> {
+        let v = Self::pop_i64(vm, strict_types)?;
         if !(0..=u16::MAX as i64).contains(&v) {
             return Err(RuntimeError::new(
                 RuntimeErrorCode::InvalidNumericEncoding,
@@ -835,9 +855,9 @@ impl OpcodeDispatcher {
         env: &ExecutionEnv,
         source: IoSource,
     ) -> Result<(), RuntimeError> {
-        let gidx = Self::pop_u16(vm)?;
+        let gidx = Self::pop_u16(vm, env.strict_types)?;
         let txid = Self::pop_txid(vm)?;
-        let io_index = Self::pop_index(vm)?;
+        let io_index = Self::pop_index(vm, env.strict_types)?;
 
         let asset_index = match source {
             IoSource::Input => {
@@ -869,8 +889,8 @@ impl OpcodeDispatcher {
         env: &ExecutionEnv,
         source: IoSource,
     ) -> Result<(), RuntimeError> {
-        let asset_index = Self::pop_index(vm)?;
-        let io_index = Self::pop_index(vm)?;
+        let asset_index = Self::pop_index(vm, env.strict_types)?;
+        let io_index = Self::pop_index(vm, env.strict_types)?;
 
         let asset = match source {
             IoSource::Input => {
@@ -913,8 +933,8 @@ impl OpcodeDispatcher {
             .unwrap_or(-1)
     }
 
-    fn try_count(value: &StackValue) -> Option<usize> {
-        match value.as_i64() {
+    fn try_count(value: &StackValue, strict_types: bool) -> Option<usize> {
+        match value.as_i64_with_strict(strict_types) {
             Ok(v) if v >= 0 => Some(v as usize),
             _ => None,
         }

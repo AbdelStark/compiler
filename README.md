@@ -48,25 +48,45 @@ Then open [http://localhost:8080](http://localhost:8080) in your browser.
 ## Basic Usage
 
 ```bash
-arkadec contract.ark
+arkadec compile contract.ark
 ```
 
 This will compile your Arkade Script contract to a JSON file that can be used with Bitcoin Taproot libraries.
 
-## Compiler Options
-
-The Arkade Compiler supports several command-line options:
+## Runtime Execution (RFC 001)
 
 ```bash
-# Output assembly instead of bytecode
-arkadec --output=asm contract.ark
+# Execute a specific function/variant
+arkadec run examples/htlc.json --function claim --variant false
 
-# Generate debug information
-arkadec --debug contract.ark
+# Execute with strict runtime modes
+arkadec run examples/htlc.json \
+  --function claim \
+  --variant false \
+  --strict \
+  --strict-types \
+  --strict-bindings
 
-# Specify output file
-arkadec --output-file=contract.json contract.ark
+# Execute against an explicit transaction context fixture
+arkadec run examples/htlc.json \
+  --function claim \
+  --variant false \
+  --context-file ./context.json \
+  --context-strict
+
+# Structured outputs for CI
+arkadec run examples/htlc.json --function claim --variant false --output json
+arkadec run examples/htlc.json --matrix --output metrics
+
+# Helper protocol commands
+arkadec run examples/htlc.json --list-functions
+arkadec run examples/htlc.json --dump-default-context
 ```
+
+Supported run outputs:
+- `plain` (default)
+- `json` (trace metadata + telemetry + policy counters)
+- `metrics` (CSV for CI pipelines)
 
 ## Compilation Artifacts
 

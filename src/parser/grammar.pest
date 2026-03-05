@@ -145,9 +145,15 @@ primary_expr = {
     this_property_access |
     constructor |
     function_call |
+    array_length_access |
     array_index_access |
     number_literal |
     identifier
+}
+
+// Array length access: identifier.length
+array_length_access = {
+    identifier ~ "." ~ "length"
 }
 
 // Array indexing: identifier[index]
