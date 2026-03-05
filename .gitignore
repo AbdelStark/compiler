@@ -35,6 +35,8 @@ Cargo.lock
 
 **/node_modules/
 .agentix/
+.claude/cache/
+.tldr/
 
 # Canonical skills are stored in `.codex/skills`.
 # Track compatibility symlinks separately (`.claude/skills`, `.agents/skills`).
